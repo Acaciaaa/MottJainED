@@ -1,0 +1,118 @@
+# 这是“物理/数值任务配置”，不是 Julia 软件依赖配置。
+# 推荐复制为 my_run.toml 后修改，不要为每次实验改动源代码。
+
+[model]
+# 单尺寸功能（spectrum/density/scaling/generator/oes/rses）使用 nm1。
+nm1 = 5
+# 跨尺寸功能（gap/fss）使用 nm_values。
+nm_values = [4, 5]
+
+[hamiltonian]
+# H = Uf nf² + Uf0 nf n0 + U0 n0²
+Uf = 0.5
+Uf0 = 1.8
+U0 = 4.5
+#     + Vf nf Δnf + Vf0 n0 Δnf + V0 n0 Δn0
+Vf = 0.0
+Vf0 = 0.4
+V0 = 1.0
+#     - t(f0† f1 f2 f3 + h.c.) + mu Nf
+t = 0.5
+# spectrum/density/scaling/generator/纠缠谱直接使用这里的 mu；
+# critical 和 fss 会在各自给定的区间内重新优化 mu。
+mu = 0.05
+
+[solver]
+# 每个 (Z,R) 离散对称扇区要求的低能本征态数。
+k = 20
+# ARPACK 本征求解容差。
+eig_tol = 1.0e-8
+# 判定能量简并块、量子数接近整数、跨扇区等能副本的三个容差。
+energy_tol = 1.0e-7
+quantum_tol = 2.0e-3
+degeneracy_tol = 2.0e-6
+# 维数不超过该值时用稠密对角化，否则用稀疏 ARPACK。
+dense_cutoff = 128
+# ARPACK Krylov 子空间相对 k 额外保留的维数。
+ncv_extra = 12
+# 使用上一个参数点的基态作为下一个参数点的初始向量。
+warm_start = true
+# BLAS 通常保持 1，避免和 FuzzifiED/Julia 线程互相嵌套。
+blas_threads = 1
+# 0 表示自动采用 JULIA_NUM_THREADS；也可显式写服务器分配的 CPU 数。
+fuzzified_threads = 0 # 0 means JULIA_NUM_THREADS / Threads.nthreads()
+
+[spectrum]
+# 固定 Hamiltonian 其余参数，在这些 mu 上逐点算低能谱。
+mu_min = 0.0
+mu_max = 0.12
+mu_count = 13
+
+[gap]
+# 对 model.nm_values 中每个尺寸扫描 mu，提取第二个 singlet 与基态的能隙。
+mu_min = 0.0
+mu_max = 0.12
+mu_count = 13
+
+[density]
+# 扫描 mu，计算基态 <Nf>、<N0> 及每轨道密度。
+mu_min = -0.5
+mu_max = 0.5
+mu_count = 21
+
+[critical]
+# 固定 U/V/t，用 CFT tower score 在此区间优化临界 mu。
+mu_min = 0.0
+mu_max = 0.12
+# 先计算多少个均匀粗网格点，再在最佳点附近运行 Brent。
+coarse_points = 9
+
+[fss]
+# 外层扫描哪个 Hamiltonian 系数；mu 仍在每个任务内部优化。
+scan_parameter = "Uf0"
+scan_values = [1.5, 2.0, 2.5, 3.0, 3.5, 4.0]
+mu_min = 0.0
+mu_max = 0.12
+coarse_points = 9
+# Brent 对 mu 的绝对精度和最大迭代数。
+mu_abs_tol = 1.0e-5
+max_iterations = 60
+
+[optimization]
+# 同时自由优化的 Hamiltonian 参数。参数越多，矩阵缓存越占内存。
+free = ["Uf", "Uf0", "Vf0", "V0", "mu"]
+max_iterations = 200
+
+[optimization.bounds]
+# 每个自由参数允许的 [下界, 上界]。
+Uf = [0.0, 10.0]
+Uf0 = [0.0, 20.0]
+Vf0 = [-20.0, 20.0]
+V0 = [-20.0, 20.0]
+mu = [-1.0, 1.0]
+
+[scaling]
+# scaling-dimension 图只保留这些 L²/C₂ 范围内的态。
+l2_max = 20.0
+c2_max = 12.0
+# 若不写 factor，程序用 CFT tower 拟合出的能量 factor。
+# factor = 0.04  # omit to use the fitted CFT energy factor
+
+[generator]
+# 共形生成元需要保留更多低能态来识别目标 state catalog。
+k = 80
+
+[entanglement]
+# 实空间切分位置；0.5 是半球。
+realspace_x = 0.5
+# 只计算总电荷中点附近这些 QA 扇区，以及给定 |2Lz| 上限。
+qa_half_window = 2
+lz2_cap = 14
+# 统计低纠缠能级时使用的相对纠缠能 cutoff。
+xi_cut = 10.0
+
+[output]
+# 相对路径以 MottJainED 根目录为准，也可写服务器绝对 scratch 路径。
+root = "output"
+# 不同实验请用不同 run_name，避免把数据混在一起。
+run_name = "default"

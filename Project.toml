@@ -1,0 +1,48 @@
+# Project.toml 描述“这个 Julia 项目是谁、直接依赖哪些软件包”。
+# 它不是运行物理计算的代码，也不存放 Hamiltonian 参数。
+name = "MottJainED"
+uuid = "807d1678-e40a-4dce-8c42-2599220538c7"
+authors = ["Ruiqi and collaborators"]
+version = "0.1.0"
+
+# [deps] 是代码直接 `using` 的依赖。右侧长字符串是包的唯一 UUID。
+# 一般不需要手动修改；应通过 Julia 的 Pkg 增删依赖。
+[deps]
+CSV = "336ed68f-0bac-5ca0-87d4-7b16caf5d00b"
+CairoMakie = "13f3f980-e62b-5c42-98c6-ff1f3baf88f0"
+DataFrames = "a93c6f00-e57d-5684-b7b6-d8193f3e46c0"
+Dates = "ade2ca70-3891-5945-98fb-dc099432e06a"
+FuzzifiED = "b45b6d2d-92f2-400f-a7df-d2d897927e5f"
+JLD2 = "033835bb-8acc-5ee8-8aae-3f567f8a3819"
+LinearAlgebra = "37e2e46d-f89d-539d-b4ee-838fcccc9c8e"
+Logging = "56ddb016-857b-54e1-b83d-db4d58db5568"
+Optim = "429524aa-4258-5aef-a3af-852621145aeb"
+Printf = "de0858da-6303-5e67-8744-51eddeeeb8d7"
+SHA = "ea8e919c-243c-51af-8825-aaa63cd721ce"
+SparseArrays = "2f01184e-e22b-5df5-ae63-d93ebab69eaf"
+SpecialFunctions = "276daf66-3868-5448-9aa4-cd146d93841b"
+Statistics = "10745b16-79ce-11e8-11f9-7d13ad32a3b2"
+TOML = "fa267f1f-6049-4f14-aa54-33bafae1ed76"
+WignerSymbols = "9f57e263-0b3d-5e2e-b1be-24f2bb48858b"
+
+# FuzzifiED 使用相邻的本地文件夹，而不是从网络注册表下载。
+[sources]
+FuzzifiED = {path = "../FuzzifiED.jl"}
+
+# [compat] 规定允许的依赖版本范围，防止未来不兼容版本破坏代码。
+[compat]
+CSV = "0.10"
+CairoMakie = "0.12, 0.13, 0.14, 0.15"
+DataFrames = "1"
+JLD2 = "0.4, 0.5, 0.6"
+Optim = "1, 2"
+SpecialFunctions = "2"
+WignerSymbols = "2"
+julia = "1.10, 1.11, 1.12"
+
+# Test 只在运行测试时需要，不是正式计算的运行时依赖。
+[extras]
+Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
+
+[targets]
+test = ["Test"]
