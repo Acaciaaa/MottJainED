@@ -52,3 +52,14 @@ julia --threads=auto --project=. bin/mottjain.jl tower \
 ```
 
 查命令和配置参数可再看 [`docs/USER_GUIDE.md`](docs/USER_GUIDE.md)。
+
+服务器上不需要反复改同一个 Slurm 模板。重计算功能各有自己的作业文件，例如：
+
+```bash
+sbatch slurm/fss.sbatch
+sbatch slurm/optimize.sbatch
+sbatch slurm/generator.sbatch
+```
+
+每个文件顶部保存该功能自己的资源申请和少量案例参数，详见
+[`slurm/README.md`](slurm/README.md)。

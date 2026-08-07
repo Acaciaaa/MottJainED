@@ -873,11 +873,31 @@ run_name = "uf0_scan_v3"
 
 ## 7. 服务器运行
 
-模板是 `scripts/run_slurm.sh`。按集群修改 partition、内存和 wall time后运行：
+重计算功能分别使用 `slurm/` 中自己的作业文件。每个文件顶部有独立的
+partition、CPU、内存和 wall time，下面“用户配置区”有该功能自己的 config、
+profile 或 point。修改一次后可以反复提交，不需要重新拼命令：
 
 ```bash
-sbatch scripts/run_slurm.sh
+sbatch slurm/spectrum.sbatch
+sbatch slurm/gap.sbatch
+sbatch slurm/density.sbatch
+sbatch slurm/critical.sbatch
+sbatch slurm/fss.sbatch
+sbatch slurm/optimize.sbatch
+sbatch slurm/scaling.sbatch
+sbatch slurm/generator.sbatch
+sbatch slurm/tower.sbatch
+sbatch slurm/oes.sbatch
+sbatch slurm/rses.sbatch
 ```
+
+例如 FSS 只需在 `slurm/fss.sbatch` 中保留自己的 `config/profile/method`；优化的
+profile、`nm1`、`k` 则只放在 `slurm/optimize.sbatch`，二者互不影响。资源默认值
+只是试跑起点，增大系统时仍需按实际峰值修改相应文件。完整说明见
+`slurm/README.md`。
+
+`plan`、`generator-register`、`fss-plot`、`fss-fit` 不做昂贵 ED，通常直接在登录
+节点运行，不为它们单独申请计算节点。
 
 不要在同一进程并行构造不同 `nm1`。FuzzifiED 的球面半径是全局设置；当前
 workflow 按系统大小顺序执行，并为每个 radius-dependent term 显式传

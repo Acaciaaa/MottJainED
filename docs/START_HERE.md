@@ -254,8 +254,12 @@ MottJainED/
 ├── bin/
 │   └── mottjain.jl          终端命令的短入口
 ├── scripts/
-│   ├── setup.jl             新机器第一次安装依赖
-│   └── run_slurm.sh         Slurm 服务器任务模板
+│   └── setup.jl             新机器第一次安装依赖
+├── slurm/                   每个重计算功能自己的服务器作业文件
+│   ├── fss.sbatch           FSS 的资源和固定命令
+│   ├── optimize.sbatch      参数优化的资源和固定命令
+│   ├── generator.sbatch     generator ED/Lambda 的资源和固定命令
+│   └── ...                  spectrum/gap/density/critical/tower/ES 等
 ├── src/
 │   ├── MottJainED.jl        包总入口，按顺序加载其它 src 文件
 │   ├── Types.jl             所有核心数据类型
@@ -277,7 +281,7 @@ MottJainED/
 
 ---
 
-## 六、`scripts` 中两个文件做什么
+## 六、`scripts` 与 `slurm` 做什么
 
 ### `scripts/setup.jl`：只负责安装环境
 
@@ -301,11 +305,18 @@ MottJainED/
 
 不是每次 spectrum/FSS 前都运行。
 
-### `scripts/run_slurm.sh`：申请服务器资源后运行一个命令
+### `slurm/*.sbatch`：一个计算功能一个服务器作业
 
-这是 Bash/Slurm 脚本，不是 Julia 文件。
+这些是 Bash/Slurm 脚本，不是 Julia 文件。旧的单一 `run_slurm.sh` 已被拆开，
+所以切换功能不再需要注释/取消注释 Julia 语句。例如：
 
-前面的：
+```bash
+sbatch slurm/fss.sbatch
+sbatch slurm/optimize.sbatch
+sbatch slurm/generator.sbatch
+```
+
+每个文件前面的：
 
 ```bash
 #SBATCH --cpus-per-task=16
@@ -319,16 +330,20 @@ MottJainED/
 - 64 GB 内存；
 - 最长 48 小时。
 
-脚本最后：
+同一个文件的“用户配置区”保存它自己的 profile、point 等少量选择。例如
+`fss.sbatch` 中：
 
 ```bash
-julia ... bin/mottjain.jl fss-all --config=config/default.toml \
-  --override=config/fss_profiles/fss7.toml
+config="config/my_run.toml"
+profile="config/fss_profiles/fss5.toml"
+method="both"
 ```
 
-才是真正启动 Julia 计算的地方。
+脚本末尾已经固定调用对应的 Julia 功能，一般不需要改。不同 `nm1` 所需内存可能
+差很多，因此各文件顶部的内存/时间只是起点；调整 `fss.sbatch` 不会改变
+`generator.sbatch`。完整文件表见 `slurm/README.md`。
 
-如果服务器不用 Slurm，就不使用这个文件。
+如果服务器不用 Slurm，就不使用这个目录。
 
 ---
 
