@@ -22,7 +22,7 @@ rank = 2
 member = 1
 
 [states.boxS]
-name = "box S"
+name = "□S"
 family = "standard"
 l2 = 0
 c2 = 0
@@ -30,7 +30,7 @@ rank = 3
 member = 1
 
 [states.dS]
-name = "dS"
+name = "∂S"
 family = "standard"
 l2 = 2
 c2 = 0
@@ -38,7 +38,7 @@ rank = 1
 member = 1
 
 [states.boxdS]
-name = "box dS"
+name = "□∂S"
 family = "standard"
 l2 = 2
 c2 = 0
@@ -54,7 +54,7 @@ rank = 1
 member = 1
 
 [states.ddS]
-name = "ddS"
+name = "∂∂S(*)"
 family = "standard"
 l2 = 6
 c2 = 0
@@ -78,7 +78,7 @@ rank = 1
 member = 1
 
 [states.curlJ]
-name = "curl J"
+name = "ϵ∂J"
 family = "standard"
 l2 = 2
 c2 = 3
@@ -86,7 +86,7 @@ rank = 2
 member = 1
 
 [states.boxJ]
-name = "box J"
+name = "□J"
 family = "standard"
 l2 = 2
 c2 = 3
@@ -94,7 +94,7 @@ rank = 3
 member = 1
 
 [states.dJ]
-name = "dJ"
+name = "∂J"
 family = "standard"
 l2 = 6
 c2 = 3
@@ -102,7 +102,7 @@ rank = 2
 member = 1
 
 [states.epsddJ]
-name = "eps ddJ"
+name = "ϵ∂∂J"
 family = "standard"
 l2 = 6
 c2 = 3
@@ -111,7 +111,7 @@ member = 1
 
 # adjoint family 用于旧 calc_row_sameang 的 L- → Lambda_z → L+ 检验。
 [states.J_other]
-name = "J (adjoint sector)"
+name = "J"
 family = "adjoint"
 l2 = 2
 c2 = 3
@@ -119,7 +119,7 @@ rank = 1
 member = 1
 
 [states.curlJ_other]
-name = "curl J (adjoint sector)"
+name = "ϵ∂J"
 family = "adjoint"
 l2 = 2
 c2 = 3
@@ -127,7 +127,7 @@ rank = 2
 member = 1
 
 [states.boxJ_other]
-name = "box J (adjoint sector)"
+name = "□J"
 family = "adjoint"
 l2 = 2
 c2 = 3
@@ -135,7 +135,7 @@ rank = 3
 member = 1
 
 [states.dJ_other]
-name = "dJ (adjoint sector)"
+name = "∂J"
 family = "adjoint"
 l2 = 6
 c2 = 3
@@ -143,7 +143,7 @@ rank = 2
 member = 1
 
 [states.epsddJ_other]
-name = "eps ddJ (adjoint sector)"
+name = "ϵ∂∂J"
 family = "adjoint"
 l2 = 6
 c2 = 3

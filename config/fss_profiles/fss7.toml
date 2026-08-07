@@ -1,5 +1,8 @@
 # 旧 FSS1.jl 的七项标准。复制本文件即可为不同扫描建立独立案例。
 [fss]
+# 旧 FSS1.jl 的基线是 k=15；当前扩展 Hamiltonian 在 Uf0=1.5 等点需要
+# k=30 才能稳定包含七项标准所需的高能级（例如 (L²,C₂)=(6,0) rank 2）。
+k = 30
 score_terms = ["ds_s", "dds_ds", "boxs_s", "j", "curlj", "dj_rank1", "t_rank1"]
 score_metric = "cost"
 

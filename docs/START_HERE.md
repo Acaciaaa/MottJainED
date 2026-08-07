@@ -138,10 +138,12 @@ Optim = "..."
 
 ```toml
 [sources]
-FuzzifiED = {path = "../FuzzifiED.jl"}
+FuzzifiED = {url = "https://github.com/FuzzifiED/FuzzifiED.jl.git", rev = "29a0cc9e06bcb5b30d3cf9f6db6416917f8a573f"}
 ```
 
-这里的 FuzzifiED 使用本地相邻文件夹，不从网络下载。
+这里把 FuzzifiED 固定到已经在本地与服务器核对过的 Git commit。
+`Pkg.instantiate()` 会自动下载这份源码，因此服务器不需要另放一个相邻的
+`FuzzifiED.jl` 文件夹，也不会意外跟随 `main` 的后续变化。
 
 `[compat]` 是允许的版本范围。例如：
 
@@ -210,7 +212,7 @@ states = solve_spectrum(cache, 0.05)
 - UUID；
 - 下载内容哈希；
 - 包之间的依赖关系；
-- 本地 FuzzifiED 路径；
+- FuzzifiED 的精确源码哈希和 Git revision；
 - Julia 版本。
 
 这就是为什么它很长。你不需要读懂它，也不要手工加入注释，因为下一次
@@ -219,7 +221,7 @@ states = solve_spectrum(cache, 0.05)
 服务器执行：
 
 ```bash
-julia scripts/setup.jl
+julia --project=. scripts/setup.jl
 ```
 
 时，`Pkg.instantiate()` 会根据 Manifest 尽量还原本地相同的软件版本。
@@ -284,7 +286,6 @@ MottJainED/
 ```text
 运行 setup.jl
   → Pkg.activate(MottJainED 根目录)
-  → Pkg.develop(../FuzzifiED.jl)
   → Pkg.instantiate()
   → Pkg.precompile()
   → 结束
@@ -925,7 +926,7 @@ CLI.main
   → 对每个 [[overlaps]] 做角动量投影和目标子空间 overlap
   → same_angular 模式做 L- → Lambda_z → L+
   → selected_states.csv + tower_overlaps.csv + analysis_metadata.toml
-  → 终端按 relation 打印 dE/f、overlap 与 total overlap
+  → 终端用旧脚本的固定格子打印 Input、l'、Target(dE/f)、overlap 与 Total
   → 仅 save_generated_vectors=true 时额外保存 tower_analysis.jld2
 ```
 
@@ -1196,8 +1197,8 @@ src/Entanglement.jl
 第一次在新机器：
 
 ```text
-确认 MottJainED 与 FuzzifiED.jl 同级
-  → julia scripts/setup.jl
+clone MottJainED 并进入项目目录
+  → julia --project=. scripts/setup.jl
 ```
 
 一次新的物理实验：
@@ -1205,7 +1206,7 @@ src/Entanglement.jl
 ```text
 复制 config/default.toml 为 config/<实验名>.toml
   → 只修改该配置
-  → julia bin/mottjain.jl plan --config=...
+  → julia --project=. bin/mottjain.jl plan --config=...
   → 确认任务数量和 k
   → 本地短任务直接运行，服务器长任务用 Slurm
   → 查看 output/<command>/<可选案例名_01>/

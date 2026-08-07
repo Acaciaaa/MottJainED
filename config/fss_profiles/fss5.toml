@@ -1,0 +1,9 @@
+# 与当前 critical 统一的五项标准；复制本文件即可为不同 FSS 扫描建立独立案例。
+[fss]
+# 五项都只需要当前认定的较低 rank；扩大系统前仍应先检查目标态是否完整出现。
+k = 10
+score_terms = ["ds_s", "j", "curlj", "dj_rank1", "t_rank1"]
+score_metric = "q"
+
+[output]
+run_name = "fss5"

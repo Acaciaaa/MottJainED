@@ -5,7 +5,7 @@
 # 单尺寸功能（spectrum/density/scaling/oes/rses）使用 nm1；generator 从 point 读取。
 nm1 = 6
 # 跨尺寸功能（gap/fss）使用 nm_values。
-nm_values = [4, 5, 6]
+nm_values = [3, 4, 5]
 
 [hamiltonian]
 # H = Uf nf² + Uf0 nf n0 + U0 n0²
@@ -74,15 +74,15 @@ mu_count = 10
 # 默认同时做固定 mu 网格和旧 FSS1 Brent 优化。
 # 若只要一种，可写 methods = ["grid"] 或 methods = ["optimize"]。
 methods = ["grid", "optimize"]
-k = 15
+k = 10
 # score_terms/score_metric 放在本次使用的 FSS profile 子 TOML。
 scan_parameter = "Uf0"
 scan_values = [1.5, 2.0, 2.5, 3.0, 3.5, 4.0]
-mu_min = 0.0
-mu_max = 0.12
-mu_count = 9
+mu_min = 0.15
+mu_max = 0.25
+mu_count = 10
 optimize_abs_tol = 1.0e-4
-optimize_max_iterations = 60
+optimize_max_iterations = 100
 
 [optimization]
 # 公共优化器设置；free/values/bounds/score_terms 由 optimization profile 覆盖。

@@ -1,7 +1,8 @@
 # MottJainED
 
-这是 `mott_jain` 的独立、配置驱动重构版。旧目录和本地 `FuzzifiED.jl`
-不会被本项目修改；本项目通过相对路径依赖后者。
+这是 `mott_jain` 的独立、配置驱动重构版。旧目录和上游 `FuzzifiED.jl`
+都不会被本项目修改；项目把 FuzzifiED 固定到已经核对过的 Git commit，
+新机器可通过 Julia 的包管理器自动取得同一份源码和对应平台的二进制依赖。
 
 如果你不熟悉 Julia 项目、TOML、命令行或本项目的文件结构，请先读：
 
@@ -10,7 +11,7 @@
 第一次使用：
 
 ```bash
-cd /Users/ruiqi/Documents/hkust/research/fuzzysphere/MottJainED
+cd MottJainED
 julia --project=. scripts/setup.jl
 julia --project=. bin/mottjain.jl plan
 ```

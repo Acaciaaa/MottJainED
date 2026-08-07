@@ -644,7 +644,9 @@ version = "1.11.0"
 
 [[deps.FuzzifiED]]
 deps = ["FuzzifiED_jll", "LinearAlgebra", "SphericalHarmonics", "WignerSymbols"]
-path = "../FuzzifiED.jl"
+git-tree-sha1 = "fe4f9de48a7b76014281b87a385088dea0733aac"
+repo-rev = "29a0cc9e06bcb5b30d3cf9f6db6416917f8a573f"
+repo-url = "https://github.com/FuzzifiED/FuzzifiED.jl.git"
 uuid = "b45b6d2d-92f2-400f-a7df-d2d897927e5f"
 version = "1.2.1"
 

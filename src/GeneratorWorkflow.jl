@@ -298,9 +298,9 @@ function _generator_provenance()
         "package_git_revision" => git_revision(PACKAGE_ROOT),
         "package_source_signature" => _jl_tree_signature(PACKAGE_ROOT),
         # 只有真正决定 basis/Hamiltonian/eigensystem 的文件进入 ED 身份。
-        # 修改 CSV/overlap/画图代码不会无意义地要求重算昂贵本征态。
+        # Project.toml 的本地依赖路径、CSV/overlap/画图代码都不改变已存本征态，
+        # 因此不能让这些纯工程改动无意义地要求重算昂贵 ED。
         "ed_source_signature" => _file_set_signature([
-            joinpath(PACKAGE_ROOT, "Project.toml"),
             joinpath(PACKAGE_ROOT, "src", "Types.jl"),
             joinpath(PACKAGE_ROOT, "src", "Model.jl"),
             joinpath(PACKAGE_ROOT, "src", "Spectrum.jl"),
@@ -553,6 +553,104 @@ function load_generator_snapshot(path::AbstractString)
     return snapshot
 end
 
+_ed_identity_path(directory::AbstractString) = joinpath(directory, ".ed_identity.toml")
+
+function _same_solver_settings(left::SolverSettings, right::SolverSettings)
+    return all(
+        field -> getfield(left, field) == getfield(right, field),
+        fieldnames(SolverSettings),
+    )
+end
+
+function _same_ed_request(
+    snapshot::GeneratorEDSnapshot,
+    point::GeneratorPoint,
+    settings::SolverSettings;
+    include_adjoint::Bool,
+    adjoint_k::Int,
+)
+    return snapshot.point.point_id == point.point_id &&
+           snapshot.point.nm1 == point.nm1 &&
+           coupling_vector(snapshot.point.couplings) == coupling_vector(point.couplings) &&
+           _same_solver_settings(snapshot.settings, settings) &&
+           snapshot.include_adjoint == include_adjoint &&
+           snapshot.adjoint_k == adjoint_k
+end
+
+"""
+验证 ED 身份，并只为旧版过宽身份规则做一次兼容迁移。
+
+旧快照把 `Project.toml` 的本地路径写法算进 source hash；相对路径改成绝对路径也会
+被误判成 Hamiltonian 变化。迁移必须同时满足：快照自身旧签名完整、所有物理参数
+与 solver 设置逐字段相同、FuzzifiED 源码相同。迁移结果放在隐藏 sidecar；一旦建立，
+以后核心源码或设置再变化就不会重复放宽检查。
+"""
+function _validate_snapshot_identity(
+    snapshot::GeneratorEDSnapshot,
+    point::GeneratorPoint,
+    settings::SolverSettings,
+    provenance::AbstractDict,
+    identity_signature::AbstractString,
+    directory::AbstractString;
+    include_adjoint::Bool,
+    adjoint_k::Int,
+)
+    saved_signature = String(get(
+        snapshot.provenance, "ed_identity_signature", snapshot.snapshot_id,
+    ))
+    saved_signature == identity_signature && return true
+
+    identity_path = _ed_identity_path(directory)
+    if isfile(identity_path)
+        accepted = TOML.parsefile(identity_path)
+        return get(accepted, "accepted_identity_signature", "") == identity_signature &&
+               get(accepted, "snapshot_saved_identity_signature", "") == saved_signature
+    end
+
+    _same_ed_request(
+        snapshot, point, settings;
+        include_adjoint=include_adjoint, adjoint_k=adjoint_k,
+    ) || return false
+    snapshot.schema_version == 2 || return false
+
+    saved_fuzzified = String(get(
+        snapshot.provenance, "fuzzified_source_signature", "missing",
+    ))
+    current_fuzzified = String(get(provenance, "fuzzified_source_signature", "missing"))
+    saved_fuzzified == current_fuzzified || return false
+
+    # 用快照当时保存的 provenance 重新生成旧签名，确认 JLD2 中的输入与旧身份一致。
+    reconstructed_saved = generator_snapshot_id(
+        snapshot.point, snapshot.settings;
+        include_adjoint=snapshot.include_adjoint,
+        adjoint_k=snapshot.adjoint_k,
+        provenance=snapshot.provenance,
+    )
+    reconstructed_saved == saved_signature || return false
+
+    atomic_toml(identity_path, Dict(
+        "accepted_identity_signature" => String(identity_signature),
+        "snapshot_saved_identity_signature" => saved_signature,
+        "migrated_at" => string(now()),
+        "reason" => "legacy ED identity included non-physical Project.toml path text",
+    ))
+    @info "accepted compatible legacy generator ED snapshot" point_id=point.point_id
+    return true
+end
+
+function _write_ed_identity(
+    directory::AbstractString,
+    identity_signature::AbstractString,
+    saved_signature::AbstractString=identity_signature,
+)
+    atomic_toml(_ed_identity_path(directory), Dict(
+        "accepted_identity_signature" => String(identity_signature),
+        "snapshot_saved_identity_signature" => String(saved_signature),
+        "created_at" => string(now()),
+    ))
+    return nothing
+end
+
 """
 建立或复用精确匹配当前 point、求解设置和代码版本的 ED 快照。
 
@@ -576,10 +674,10 @@ function ensure_generator_snapshot(
     path = joinpath(directory, "ed_snapshot.jld2")
     if isfile(path) && !force
         snapshot = load_generator_snapshot(path)
-        saved_signature = String(get(
-            snapshot.provenance, "ed_identity_signature", snapshot.snapshot_id,
-        ))
-        saved_signature == identity_signature || throw(ArgumentError(
+        _validate_snapshot_identity(
+            snapshot, point, settings, provenance, identity_signature, directory;
+            include_adjoint=include_adjoint, adjoint_k=adjoint_k,
+        ) || throw(ArgumentError(
             "Existing ED under point '$(point.point_id)' was made with different Hamiltonian/solver/code settings. " *
             "Use a new point_id, or pass --force only if you intentionally want to replace that point's ED.",
         ))
@@ -621,6 +719,7 @@ function ensure_generator_snapshot(
     )
     ensure_output(directory)
     atomic_jldsave(path; snapshot=snapshot)
+    _write_ed_identity(directory, identity_signature)
     materialize_generator_snapshot(directory, snapshot; point=point)
     @info "saved generator ED snapshot" point_id=point.point_id path
     return (snapshot=snapshot, path=path, directory=directory, reused=false)
@@ -644,10 +743,10 @@ function locate_generator_snapshot(
         "No ED snapshot for point '$(point.point_id)'. Run generator --point=$(point.point_id) first.",
     ))
     snapshot = load_generator_snapshot(path)
-    saved_signature = String(get(
-        snapshot.provenance, "ed_identity_signature", snapshot.snapshot_id,
-    ))
-    saved_signature == identity_signature || throw(ArgumentError(
+    _validate_snapshot_identity(
+        snapshot, point, settings, provenance, identity_signature, directory;
+        include_adjoint=include_adjoint, adjoint_k=adjoint_k,
+    ) || throw(ArgumentError(
         "The ED stored under point '$(point.point_id)' does not match the current Hamiltonian/solver/code settings. " *
         "Run generator with a new point_id, or use --force to intentionally replace it.",
     ))
@@ -928,44 +1027,92 @@ end
 
 _tower_value(value) = ismissing(value) ? "--" : @sprintf("%.4f", Float64(value))
 
-"""把 tower overlap 按原脚本的风格打印到终端；CSV 仍是完整机器可读结果。"""
+function _tower_state_names(state_specs::AbstractDict)
+    names = Dict{String,String}()
+    for (label, specification) in state_specs
+        names[String(label)] = String(get(specification, "name", String(label)))
+    end
+    return names
+end
+
+_tower_display_name(label, names::AbstractDict) = get(names, String(label), String(label))
+
+function _tower_target_cell(row, names::AbstractDict)
+    name = _tower_display_name(row.target, names)
+    # 原脚本显示的是 (E_target-E_input)/factor。factor 不存在时才退回原始能量差。
+    energy = !ismissing(row.scaled_delta) ? row.scaled_delta : row.delta_energy
+    energy_text = ismissing(energy) ? "--" : @sprintf("%.2f", Float64(energy))
+    return @sprintf("%s(%s)", name, energy_text)
+end
+
+function _print_tower_border(io::IO, target_columns::Int)
+    print(io, "|--------|----|")
+    for _ in 1:target_columns
+        print(io, "---------------------|")
+    end
+    println(io, "--------|")
+end
+
+function _print_tower_header(io::IO, target_columns::Int)
+    print(io, "| Input  | l' |")
+    for index in 1:target_columns
+        @printf(io, " %-19s |", "Target $(index) Ovlp")
+    end
+    println(io, " Total  |")
+end
+
+"""
+把 tower overlap 打印成旧 `conformal_generator.jl` 的固定格子：
+`Input | l' | Target(Δ/f) overlap | ... | Total`。
+
+CSV 仍保留 relation、mode、能量等完整机器可读信息；这里只改变终端展示。
+"""
 function _print_tower_summary(
     table::DataFrame;
     point_id::AbstractString,
     analysis_id::AbstractString,
+    state_names::AbstractDict=Dict{String,String}(),
     io::IO=stdout,
 )
     println(io)
-    println(io, "Tower overlaps | point=$(point_id) | $(analysis_id)")
-    println(io, repeat('-', 72))
+    println(io, "Tower overlaps: point=$(point_id), $(analysis_id)")
     if nrow(table) == 0
-        println(io, "  没有启用的 overlap relation。")
-        println(io, repeat('-', 72))
+        println(io, "没有启用的 overlap relation。")
         return nothing
     end
 
-    for group in groupby(table, :relation; sort=false)
+    groups = collect(groupby(table, :relation; sort=false))
+    target_columns = max(2, maximum(nrow, groups))
+    _print_tower_header(io, target_columns)
+    _print_tower_border(io, target_columns)
+
+    skipped = Pair{String,String}[]
+    for group in groups
         first_row = first(eachrow(group))
-        input = String(first_row.input)
-        mode = String(first_row.mode)
+        input = _tower_display_name(first_row.input, state_names)
         target_l = ismissing(first_row.target_l) ? "--" : string(Int(first_row.target_l))
-        println(io, "  $(String(first_row.relation)):  $(input)  [$(mode), target L=$(target_l)]")
+        @printf(io, "| %-6s | %-2s |", input, target_l)
         if String(first_row.status) != "ok"
-            println(io, "    skipped: ", String(first_row.message))
+            @printf(io, " %-12s %6s |", "SKIPPED", "--")
+            for _ in 2:target_columns
+                print(io, "          -          |")
+            end
+            @printf(io, " %6s |\n", "--")
+            push!(skipped, String(first_row.relation) => String(first_row.message))
             continue
         end
-        for row in eachrow(group)
-            delta = ismissing(row.scaled_delta) ?
-                "dE=" * _tower_value(row.delta_energy) :
-                "dE/f=" * _tower_value(row.scaled_delta)
-            @printf(
-                io, "    %-24s %-14s overlap=%s\n",
-                String(row.target), delta, _tower_value(row.overlap),
-            )
+        for (index, row) in enumerate(eachrow(group))
+            @printf(io, " %-12s %6s |", _tower_target_cell(row, state_names), _tower_value(row.overlap))
         end
-        println(io, "    total overlap = ", _tower_value(first_row.total_overlap))
+        for _ in (nrow(group) + 1):target_columns
+            print(io, "          -          |")
+        end
+        @printf(io, " %6s |\n", _tower_value(first_row.total_overlap))
     end
-    println(io, repeat('-', 72))
+    _print_tower_border(io, target_columns)
+    for (relation, message) in skipped
+        println(io, "Skipped $(relation): $(message)")
+    end
     return nothing
 end
 
@@ -1005,6 +1152,7 @@ function run_tower_analysis(
             overlap_table = CSV.read(overlap_path, DataFrame)
             _print_tower_summary(
                 overlap_table; point_id=point.point_id, analysis_id=analysis_id,
+                state_names=_tower_state_names(state_specs),
             )
             @info "reusing tower analysis" point_id=point.point_id analysis_id output
             return (output=output, analysis_id=analysis_id, reused=true)
@@ -1108,6 +1256,7 @@ function run_tower_analysis(
     atomic_toml(completion, metadata)
     _print_tower_summary(
         overlap_table; point_id=point.point_id, analysis_id=analysis_id,
+        state_names=_tower_state_names(state_specs),
     )
     @info "saved tower analysis" point_id=point.point_id analysis_id output
     return (

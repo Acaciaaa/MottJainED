@@ -555,6 +555,11 @@ function main(args=ARGS)
         if command == "fss-all"
             for method in methods
                 source = joinpath(directory, "fss_$(method)_results.csv")
+                valid = _valid_fss(CSV.read(source, DataFrame), :delta_s)
+                if nrow(valid) == 0
+                    @warn "FSS data were saved, but no valid delta_s rows are available; plot and fit skipped" method source
+                    continue
+                end
                 plot_fss(
                     source; y=:delta_s,
                     output=joinpath(directory, "delta_s_$(method)_fss.png"),

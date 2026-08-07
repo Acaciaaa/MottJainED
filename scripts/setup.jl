@@ -8,10 +8,9 @@ root = normpath(joinpath(@__DIR__, ".."))
 # 选择本项目的 Project.toml/Manifest.toml。
 Pkg.activate(root)
 
-# 告诉 Julia：FuzzifiED 不是从网络安装，而是使用相邻的 ../FuzzifiED.jl。
-Pkg.develop(path=normpath(joinpath(root, "..", "FuzzifiED.jl")))
-
 # 根据 Project.toml 和 Manifest.toml 安装/核对全部依赖。
+# FuzzifiED 已固定到核对过的 GitHub commit；Pkg 会自动下载同一份源码，
+# 不要求服务器上存在相邻的 FuzzifiED.jl 文件夹。
 Pkg.instantiate()
 
 # 预编译依赖，减少第一次正式计算的启动时间。

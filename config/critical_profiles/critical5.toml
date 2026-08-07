@@ -1,6 +1,6 @@
 # critical 的旧五项标准。复制本文件即可为不同案例增删 score_terms。
 [critical]
-score_terms = ["ds_s", "j", "curlj", "dj_rank1", "t_rank2"]
+score_terms = ["ds_s", "j", "curlj", "dj_rank1", "t_rank1"]
 score_metric = "q"
 
 [output]

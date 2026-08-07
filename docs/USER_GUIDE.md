@@ -10,8 +10,8 @@ H=U_f\!\int n_f^2+U_{f0}\!\int n_fn_0+U_0\!\int n_0^2
  +V_0\!\int n_0\nabla^2n_0-t(f_0^\dagger f_1f_2f_3+h.c.)+\mu N_f,
 \]
 
-但把模型、数值求解、物理诊断、数据存取和画图分离。项目不会修改
-`../mott_jain` 或 `../FuzzifiED.jl`。
+但把模型、数值求解、物理诊断、数据存取和画图分离。项目不会修改旧的
+`../mott_jain` 或上游 FuzzifiED 源码。
 
 | 旧文件 | 新入口 |
 |---|---|
@@ -29,21 +29,23 @@ H=U_f\!\int n_f^2+U_{f0}\!\int n_fn_0+U_0\!\int n_0^2
 ## 2. 安装与快速检查
 
 ```bash
-cd /Users/ruiqi/Documents/hkust/research/fuzzysphere/MottJainED
+cd MottJainED
 julia --project=. scripts/setup.jl
 julia --project=. bin/mottjain.jl plan
 julia --project=. -e 'using Pkg; Pkg.test()'
 ```
 
-项目通过相对路径绑定本地 `../FuzzifiED.jl`。复制到服务器时，最好保持
-`MottJainED` 与 `FuzzifiED.jl` 为同级目录；若布局不同，执行：
+FuzzifiED 已在 `Project.toml`/`Manifest.toml` 中固定到核对过的 Git commit。
+新服务器只需 clone 本项目，然后运行：
 
-```julia
-using Pkg
-Pkg.activate("/path/to/MottJainED")
-Pkg.develop(path="/actual/path/to/FuzzifiED.jl")
-Pkg.instantiate()
+```bash
+cd MottJainED
+julia --project=. scripts/setup.jl
 ```
+
+Julia 会下载固定版本的 FuzzifiED，并为服务器平台安装它的 JLL 二进制依赖；
+不要求服务器上已有相邻的 `FuzzifiED.jl`。`Manifest.toml` 记录精确版本，
+`Project.toml` 的 `[sources]` 则使 Julia 1.12 也能从指定 Git commit 恢复它。
 
 ## 3. 用配置改变任务
 
@@ -552,12 +554,20 @@ optimize_max_iterations = 60
 
 ```toml
 [fss]
+# 旧 FSS1.jl 以 k=15 为基线；当前扩展 Hamiltonian 的完整扫描使用 k=30，
+# 才能覆盖 Uf0=1.5 等参数点需要的高能级。不要使用测试用的 k=3。
+k = 30
 score_terms = ["ds_s", "dds_ds", "boxs_s", "j", "curlj", "dj_rank1", "t_rank1"]
 score_metric = "cost"
 
 [output]
 run_name = "fss7"
 ```
+
+另有 `config/fss_profiles/fss5.toml`，使用目前统一的五项
+`["ds_s", "j", "curlj", "dj_rank1", "t_rank1"]`、`score_metric="q"`
+和 `k=10`。要跑这一套时，只把下面命令中的 `fss7.toml` 换成
+`fss5.toml`；它会写到独立的 `output/fss/fss5_XX/`，不会与七项结果混合。
 
 ```bash
 # 未加 --method：按 TOML 的 methods；默认两种都算
@@ -725,9 +735,11 @@ julia --threads=auto --project=. bin/mottjain.jl tower \
 - `analysis_metadata.toml`：point、固定 generator、factor 和本次 tower 配置快照；
 - `tower_analysis.jld2`：仅当 `save_generated_vectors=true` 时才额外保存生成后向量。
 
-运行结束后，`tower_overlaps.csv` 的主要内容还会像旧脚本一样直接打印到终端：
-每条 relation 显示 input、mode、目标 L、各 target 的 `dE/f`、overlap 和 total
-overlap。重跑并复用已有 `tower_01` 时也会再次打印，不需要手动打开 CSV。
+运行结束后，`tower_overlaps.csv` 的主要内容还会按照旧
+`conformal_generator.jl` 的固定格子直接打印到终端。每一行显示 input、目标
+`l'`、最多若干个 `Target(dE/f) + overlap` 和 total overlap；常用的一到两个
+target 会保持原来的两列宽度。`mode`、relation 名和原始能量仍完整保存在 CSV
+中。重跑并复用已有 `tower_01` 时也会再次打印，不需要手动打开 CSV。
 
 `tower` 严格不做 ED，也不重新拟合 generator；缺少任意一个固定文件都会明确
 报错并要求先运行 `generator --point=...`。
@@ -895,8 +907,10 @@ workflow 按系统大小顺序执行，并为每个 radius-dependent term 显式
 **FSS fit 不可识别**：至少准备三个系统大小；扫描曲线数增加时，每条曲线也增加
 一个振幅参数，因此总数据点必须同步增加。
 
-**服务器找不到 FuzzifiED**：运行 `Pkg.develop(path="实际路径")`，随后
-`Pkg.instantiate()`，不要在源文件里硬编码服务器路径。
+**服务器找不到 FuzzifiED**：在项目根目录重新运行
+`julia --project=. scripts/setup.jl`。若下载失败，应在允许联网的登录节点完成
+`Pkg.instantiate()`；不要在源文件里硬编码服务器路径，也不要改回本地
+`Pkg.develop`，否则服务器和本地可能使用不同源码。
 
 **想直接使用 Julia API**：
 

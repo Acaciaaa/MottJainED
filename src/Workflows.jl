@@ -737,7 +737,8 @@ function plot_fss(
         fig[1, 1]; xlabel="nm1^(-1/2)", ylabel=String(y),
         title="$(String(y)) vs nm1^(-1/2), $scan_name scan", aspect=1,
     )
-    xlims!(axis, 0.0, 0.52)
+    # 旧图只画 nm1=4:7，因此上限固定为 0.52；配置含 nm1=3 时也要显示 x=1/√3。
+    xlims!(axis, 0.0, max(0.52, 1.05 * maximum(data.x)))
     y == :delta_s && ylims!(axis, 1.0, 2.0)
     for value in sort(unique(data.scan_value))
         sub = sort(filter(row -> row.scan_value == value, data), :x)

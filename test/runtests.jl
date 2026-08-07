@@ -2,6 +2,21 @@ using Test
 using MottJainED
 using DataFrames
 
+@testset "Portable FuzzifiED dependency" begin
+    root = dirname(@__DIR__)
+    project = MottJainED.TOML.parsefile(joinpath(root, "Project.toml"))
+    source = project["sources"]["FuzzifiED"]
+    @test source["url"] == "https://github.com/FuzzifiED/FuzzifiED.jl.git"
+    @test source["rev"] == "29a0cc9e06bcb5b30d3cf9f6db6416917f8a573f"
+    @test !haskey(source, "path")
+
+    manifest = MottJainED.TOML.parsefile(joinpath(root, "Manifest.toml"))
+    fuzzified = only(manifest["deps"]["FuzzifiED"])
+    @test fuzzified["git-tree-sha1"] == "fe4f9de48a7b76014281b87a385088dea0733aac"
+    @test fuzzified["repo-rev"] == source["rev"]
+    @test !haskey(fuzzified, "path")
+end
+
 @testset "Couplings" begin
     base = Couplings()
     changed = MottJainED.with_coupling(base, :Uf0, 2.5)
@@ -176,10 +191,20 @@ end
         joinpath(dirname(@__DIR__), "config", "default.toml");
         override=joinpath(dirname(@__DIR__), "config", "fss_profiles", "fss7.toml"),
     )
+    fss5_case = load_config(
+        joinpath(dirname(@__DIR__), "config", "default.toml");
+        override=joinpath(dirname(@__DIR__), "config", "fss_profiles", "fss5.toml"),
+    )
     @test length(critical_case["critical"]["score_terms"]) == 5
     @test critical_case["output"]["run_name"] == "critical5"
     @test length(fss_case["fss"]["score_terms"]) == 7
+    @test fss_case["fss"]["k"] == 30
     @test fss_case["output"]["run_name"] == "fss7"
+    @test fss5_case["fss"]["score_terms"] ==
+          ["ds_s", "j", "curlj", "dj_rank1", "t_rank1"]
+    @test fss5_case["fss"]["score_metric"] == "q"
+    @test fss5_case["fss"]["k"] == 10
+    @test fss5_case["output"]["run_name"] == "fss5"
     mktempdir() do directory
         first_case = MottJainED._ordinary_task_output(
             critical_case, :critical, directory,
@@ -365,6 +390,51 @@ end
         @test restored[2].vector == [0.0, 1.0]
         @test restored[2].basis == :basis
 
+        # 旧快照曾把 Project.toml 的路径文字算进 ED 身份。只要快照旧签名自洽、
+        # Hamiltonian/solver/FuzzifiED 都相同，就迁移一次；之后 sidecar 严格锁定新身份。
+        legacy_provenance = Dict{String,Any}(
+            "ed_source_signature" => "legacy-project-path-hash",
+            "fuzzified_source_signature" => "same-fuzzified-source",
+        )
+        legacy_signature = MottJainED.generator_snapshot_id(
+            registered, settings; include_adjoint=false, adjoint_k=30,
+            provenance=legacy_provenance,
+        )
+        legacy_provenance["ed_identity_signature"] = legacy_signature
+        legacy_snapshot = GeneratorEDSnapshot(
+            snapshot_id=registered.point_id, created_at="test", point=registered,
+            settings=settings, include_adjoint=false, adjoint_k=30,
+            sectors=packed, model_summary=Dict("nm1" => 6),
+            provenance=legacy_provenance,
+        )
+        current_provenance = Dict{String,Any}(
+            "ed_source_signature" => "physics-only-hash",
+            "fuzzified_source_signature" => "same-fuzzified-source",
+        )
+        current_signature = MottJainED.generator_snapshot_id(
+            registered, settings; include_adjoint=false, adjoint_k=30,
+            provenance=current_provenance,
+        )
+        migration_directory = joinpath(directory, "legacy_migration")
+        mkpath(migration_directory)
+        @test MottJainED._validate_snapshot_identity(
+            legacy_snapshot, registered, settings, current_provenance,
+            current_signature, migration_directory;
+            include_adjoint=false, adjoint_k=30,
+        )
+        @test isfile(joinpath(migration_directory, ".ed_identity.toml"))
+        changed_provenance = copy(current_provenance)
+        changed_provenance["ed_source_signature"] = "changed-physics-code"
+        changed_signature = MottJainED.generator_snapshot_id(
+            registered, settings; include_adjoint=false, adjoint_k=30,
+            provenance=changed_provenance,
+        )
+        @test !MottJainED._validate_snapshot_identity(
+            legacy_snapshot, registered, settings, changed_provenance,
+            changed_signature, migration_directory;
+            include_adjoint=false, adjoint_k=30,
+        )
+
         tower_table = DataFrame(
             status=["ok", "ok", "skipped"],
             relation=["curlJ_same_L", "curlJ_same_L", "optional"],
@@ -380,13 +450,18 @@ end
         )
         io = IOBuffer()
         MottJainED._print_tower_summary(
-            tower_table; point_id="nm6_good_01", analysis_id="tower_01", io=io,
+            tower_table; point_id="nm6_good_01", analysis_id="tower_01",
+            state_names=Dict(
+                "curlJ_other" => "curl J", "J_other" => "J",
+                "boxJ_other" => "box J",
+            ), io=io,
         )
         printed = String(take!(io))
-        @test occursin("curlJ_same_L", printed)
-        @test occursin("boxJ_other", printed)
-        @test occursin("total overlap = 0.9000", printed)
-        @test occursin("skipped: target not found", printed)
+        @test occursin("| Input  | l' | Target 1 Ovlp", printed)
+        @test occursin("| curl J | 1  | J(-0.50)", printed)
+        @test occursin("box J(0.50)", printed)
+        @test occursin("0.9000 |", printed)
+        @test occursin("Skipped optional: target not found", printed)
     end
 end
 
