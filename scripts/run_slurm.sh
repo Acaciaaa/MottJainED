@@ -21,4 +21,5 @@ export OPENBLAS_NUM_THREADS=1
 # 进入项目根目录，然后执行 fss-all。
 # 正式使用时通常应把 default.toml 改成你自己的配置文件。
 cd "$project_dir"
-julia --startup-file=no --project=. bin/mottjain.jl fss-all --config=config/default.toml
+julia --startup-file=no --project=. bin/mottjain.jl fss-all \
+  --config=config/default.toml --override=config/fss_profiles/fss7.toml

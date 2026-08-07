@@ -1,0 +1,24 @@
+# 同时优化 μc、Uf、Uf0、Vf0；Vf=0、V0=1、t=0.5 固定。
+[optimization]
+free = ["Uf", "Uf0", "Vf0", "mu"]
+# 这是当前 nm5_candidate_01 使用过的五项标准；可按新案例直接修改本文件副本。
+score_terms = ["ds_s", "j", "curlj", "dj_rank3", "t_rank1"]
+score_metric = "cost"
+algorithm = "auto"
+tie_u0_to_uf = true
+
+[optimization.values]
+Uf = 0.5
+Uf0 = 3.0
+U0 = 4.5
+Vf = 0.0
+Vf0 = 0.5
+V0 = 1.0
+t = 0.5
+mu = 0.05
+
+[optimization.bounds]
+Uf = [0.0, 10.0]
+Uf0 = [0.0, 20.0]
+Vf0 = [-20.0, 20.0]
+mu = [-1.0, 1.0]

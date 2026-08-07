@@ -19,6 +19,34 @@ function atomic_csv(path::AbstractString, table)
     return path
 end
 
+"""先写临时文件再原子替换 JLD2；昂贵 ED 被中断时不会留下看似完整的快照。"""
+function atomic_jldsave(path::AbstractString; kwargs...)
+    mkpath(dirname(path))
+    temporary = path * ".tmp-$(getpid())"
+    try
+        jldsave(temporary; kwargs...)
+        mv(temporary, path; force=true)
+    finally
+        isfile(temporary) && rm(temporary; force=true)
+    end
+    return path
+end
+
+"""原子写 TOML 元数据，避免正文与文件名对应但内容只写了一半。"""
+function atomic_toml(path::AbstractString, data::AbstractDict)
+    mkpath(dirname(path))
+    temporary = path * ".tmp-$(getpid())"
+    try
+        open(temporary, "w") do io
+            TOML.print(io, data; sorted=true)
+        end
+        mv(temporary, path; force=true)
+    finally
+        isfile(temporary) && rm(temporary; force=true)
+    end
+    return path
+end
+
 """向结果 CSV 追加一行；文件首次出现时自动写表头。"""
 function append_csv(path::AbstractString, row::NamedTuple)
     mkpath(dirname(path))
@@ -97,3 +125,91 @@ end
 
 """把异常压成单行文字，保证能安全写入 CSV。"""
 sanitize_error(err) = replace(sprint(showerror, err), '\n' => ' ', '\r' => ' ')
+
+# CLI 默认把 Info 写进文件，只把 Warn/Error 同时送到终端。
+struct FileTerminalLogger <: AbstractLogger
+    file::SimpleLogger
+    terminal::ConsoleLogger
+end
+
+Logging.min_enabled_level(logger::FileTerminalLogger) = min(
+    Logging.min_enabled_level(logger.file),
+    Logging.min_enabled_level(logger.terminal),
+)
+
+_logger_enabled(logger, level, mod, group, id) =
+    level >= Logging.min_enabled_level(logger) &&
+    Logging.shouldlog(logger, level, mod, group, id)
+
+Logging.shouldlog(logger::FileTerminalLogger, level, mod, group, id) =
+    _logger_enabled(logger.file, level, mod, group, id) ||
+    _logger_enabled(logger.terminal, level, mod, group, id)
+
+Logging.catch_exceptions(::FileTerminalLogger) = false
+
+function Logging.handle_message(
+    logger::FileTerminalLogger,
+    level,
+    message,
+    mod,
+    group,
+    id,
+    filepath,
+    line;
+    kwargs...,
+)
+    if _logger_enabled(logger.file, level, mod, group, id)
+        Logging.handle_message(
+            logger.file, level, message, mod, group, id, filepath, line; kwargs...,
+        )
+    end
+    if _logger_enabled(logger.terminal, level, mod, group, id)
+        Logging.handle_message(
+            logger.terminal, level, message, mod, group, id, filepath, line; kwargs...,
+        )
+    end
+    return nothing
+end
+
+function start_task_logging(output::AbstractString; filename::AbstractString="run.log")
+    directory = ensure_output(output)
+    path = joinpath(directory, filename)
+    io = open(path, "a")
+    println(io, "\n===== $(now()) pid=$(getpid()) =====")
+    flush(io)
+    logger = FileTerminalLogger(
+        SimpleLogger(io, Logging.Info), ConsoleLogger(stderr, Logging.Warn),
+    )
+    previous = global_logger(logger)
+    return (path=path, io=io, previous=previous)
+end
+
+function stop_task_logging(state)
+    global_logger(state.previous)
+    flush(state.io)
+    close(state.io)
+    return nothing
+end
+
+"""保存本次已经合并 CLI/override 后的完整配置，便于服务器结果复现。"""
+function write_resolved_config(
+    output::AbstractString,
+    config::AbstractDict;
+    base_config=nothing,
+    override_config=nothing,
+)
+    ensure_output(output)
+    resolved = deepcopy(config)
+    sources = Dict{String,Any}()
+    base_config === nothing || (sources["base_config"] = abspath(String(base_config)))
+    override_config === nothing ||
+        (sources["override_config"] = abspath(String(override_config)))
+    isempty(sources) || (resolved["resolved_sources"] = sources)
+    path = joinpath(output, "resolved_config.toml")
+    temporary = path * ".tmp-$(getpid())"
+    open(temporary, "w") do io
+        TOML.print(io, resolved; sorted=true)
+    end
+    mv(temporary, path; force=true)
+    return path
+end

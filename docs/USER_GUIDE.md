@@ -78,16 +78,273 @@ blas_threads = 1
 
 服务器上建议令 Julia 线程数与申请的 CPU 数一致，并保持 BLAS 为 1，避免
 FuzzifiED、Julia 和 BLAS 三层线程互相超额占用。
+本地直接运行数值任务时建议加 `--threads=auto`；如果不加，Julia 通常只有
+1 个线程，当 `fuzzified_threads=0` 时 FuzzifiED 也会只使用 1 个线程。
 
 ## 4. 命令
 
 统一调用形式：
 
 ```bash
-julia --startup-file=no --project=. bin/mottjain.jl COMMAND --config=config/my_run.toml
+julia --startup-file=no --threads=auto --project=. bin/mottjain.jl COMMAND --config=config/my_run.toml
 ```
 
-### 谱、singlet gap 与密度
+下面的例子就是本项目目前全部功能的参考，不需要使用程序里的 `--help`。
+所有命令都应先 `cd` 到 `MottJainED` 根目录再运行。
+
+### 全部命令速查
+
+| 功能 | `COMMAND` | 主要读取的配置 | 主要结果 |
+|---|---|---|---|
+| 只检查任务 | `plan` | 全部配置的任务规模 | 只打印预览，不计算、不写数值结果 |
+| 低能谱随 μ | `spectrum` | `[model] [hamiltonian] [solver] [spectrum]` | `spectrum/summary.csv`、`spectra/*.csv` |
+| scalar/J gap | `gap` | `[model].nm_values [hamiltonian] [gap]` | `gap_results.csv`、两张 gap 图 |
+| particle density | `density` | `[model].nm1 [hamiltonian] [density]` | `density.csv`、`density.png` |
+| 固定 μ 网格找临界点 | `critical` | `[critical]` | `critical_scan.csv`、`critical_point.csv` |
+| 优化任意参数组合 | `optimize` | `[optimization]`，可加 profile | `evaluations.csv`、`best.csv` |
+| 计算 FSS 数据 | `fss` | `[model].nm_values [fss]` | grid/optimize 两套 CSV |
+| FSS 数据、图和拟合 | `fss-all` | `[fss]` | FSS CSV、图、可识别时的拟合 |
+| 只画已有 FSS | `fss-plot` | 已有 FSS CSV | PNG，不做 ED |
+| 只拟合已有 FSS | `fss-fit` | 已有 FSS CSV | fit CSV/PNG，不做 ED |
+| scaling-dimension 图 | `scaling` | `[model] [hamiltonian] [solver] [scaling]` | scaling CSV/PNG |
+| 登记候选参数 | `generator-register` | optimization 的 `best.csv` | `config/generator_points.csv` 新增一行 |
+| 固定 ED 与生成元 | `generator` | 全局候选点、`config/generator/<point>/generator_fit.toml` | ED 快照与固定 Lambda |
+| 试 tower/overlap | `tower` | 已有 ED/Lambda、`config/generator/<point>/tower.toml` | 每次选态和 overlap 结果 |
+| 轨道纠缠谱 | `oes` | `[model] [hamiltonian] [solver] [entanglement]` | `oes/` 下 CSV/PNG |
+| 实空间纠缠谱 | `rses` | 同上 | `rses/` 下 CSV/PNG |
+
+#### 通用写法和临时参数
+
+最普通的写法：
+
+```bash
+julia --threads=auto --project=. bin/mottjain.jl COMMAND \
+  --config=config/my_run.toml
+```
+
+常见的临时参数如下。不是每个参数都适用于每个功能：
+
+| 参数 | 意义 | 适用情况 |
+|---|---|---|
+| `--config=FILE` | 本次读取的完整任务配置 | 所有数值功能 |
+| `--override=FILE` | 在完整配置上叠加一个小 TOML | 给 `critical/fss/optimize` 切换案例 profile |
+| `--nm1=N` | 临时替换 `[model].nm1` | `plan/optimize/spectrum/density/critical/scaling/oes/rses` |
+| `--k=N` | 临时替换当前功能自己的 k | `plan/optimize/gap/density/critical/fss/generator/tower` |
+| `--run-name=NAME` | 在当前功能目录下建立 `NAME_01/NAME_02` | 普通功能需要区分多组输入时 |
+| `--output=DIR` | 临时替换 `[output].root` | 本地与服务器输出根目录不同时 |
+| `--force` | 覆盖已有 checkpoint 或固定结果 | `spectrum/gap/density/fss/generator/tower`，慎用 |
+
+`spectrum/scaling/oes/rses` 使用通用 `[solver].k`；这四个功能若要改 k，请直接改
+TOML 的 `[solver]`，不要在命令末尾加 `--k`。`gap/density/critical/fss/optimize`
+各自有独立 k，避免简单功能错误继承很大的 `[solver].k`。
+
+只有少数功能有专用命令参数：
+
+| 功能 | 专用参数 | 意义 |
+|---|---|---|
+| `spectrum` | `--keep-vectors` | 除 CSV 外，再为每个 μ 保存 State 向量 JLD2 |
+| `fss/fss-all` | `--method=grid\|optimize\|both` | 临时选择本次 μc 方法，不改 TOML |
+| `fss-plot/fss-fit` | `--method=...`、`--y=列名`、`--source=CSV` | 选择已有数据和要画/拟合的列 |
+| `generator-register` | `--point=ID`、`--from=CSV`、`--notes=文字` | 指定新候选 ID、optimization 结果和备注 |
+| `generator-register` | `--replace`、`--registry=CSV` | 明确替换同名行，或改用另一份全局表 |
+| `generator` | `--point=ID`、`--ed-only`、`--refit` | 指定候选点，以及只做 ED/重拟合的特殊模式 |
+| `generator` | `--registry=CSV`、`--data-root=DIR`、`--fit-config=TOML` | 临时改候选表、快照根目录或 Lambda 训练定义 |
+| `tower` | `--point=ID`、`--tower-config=TOML` | 指定已有候选点和本次 tower 选态定义 |
+| `tower` | `--registry=CSV`、`--data-root=DIR` | 必须与生成 ED 时使用的位置相同 |
+
+表中没有列出的物理参数都应在 TOML 中修改；例如 Hamiltonian 系数不作为长串
+命令参数传入，这样每次运行都能把完整配置留档。
+
+#### plan：只确认配置，不开始计算
+
+```bash
+julia --project=. bin/mottjain.jl plan --config=config/my_run.toml
+```
+
+预览某个 optimization profile、系统大小和 k：
+
+```bash
+julia --project=. bin/mottjain.jl plan \
+  --config=config/my_run.toml \
+  --override=config/optimization_profiles/mu_uf_uf0_vf0.toml \
+  --nm1=5 --k=10
+```
+
+#### spectrum、gap、density、critical
+
+```bash
+# 单个 nm1，在 [spectrum] 的 μ 列表上保存低能谱
+julia --threads=auto --project=. bin/mottjain.jl spectrum \
+  --config=config/my_run.toml
+
+# 若确实需要把每个 μ 的 State 向量也写入 spectra/*.jld2
+julia --threads=auto --project=. bin/mottjain.jl spectrum \
+  --config=config/my_run.toml --keep-vectors
+
+# 对 [model].nm_values 的每个尺寸同时画 scalar gap 和 J gap
+julia --threads=auto --project=. bin/mottjain.jl gap \
+  --config=config/my_run.toml
+
+# 单尺寸扫描 ⟨Nf⟩
+julia --threads=auto --project=. bin/mottjain.jl density \
+  --config=config/my_run.toml
+
+# 硬算 [critical] 给出的全部 μ；score 从子 TOML 读取
+julia --threads=auto --project=. bin/mottjain.jl critical \
+  --config=config/my_run.toml \
+  --override=config/critical_profiles/critical5.toml
+```
+
+改 μ 范围、点数或 k 时编辑 `my_run.toml` 对应 section；`score_terms` 和
+`score_metric` 编辑本次 critical profile。`critical` 不调用优化器。
+
+#### optimize：五种常用自由参数组合
+
+```bash
+# 只优化 muc
+julia --threads=auto --project=. bin/mottjain.jl optimize \
+  --config=config/my_run.toml \
+  --override=config/optimization_profiles/mu_only.toml \
+  --nm1=5 --k=10
+
+# muc + Uf0
+julia --threads=auto --project=. bin/mottjain.jl optimize \
+  --config=config/my_run.toml \
+  --override=config/optimization_profiles/mu_uf0.toml \
+  --nm1=5 --k=10
+
+# muc + Uf0 + V0
+julia --threads=auto --project=. bin/mottjain.jl optimize \
+  --config=config/my_run.toml \
+  --override=config/optimization_profiles/mu_uf0_v0.toml \
+  --nm1=5 --k=10
+
+# muc + Uf + Uf0 + Vf0
+julia --threads=auto --project=. bin/mottjain.jl optimize \
+  --config=config/my_run.toml \
+  --override=config/optimization_profiles/mu_uf_uf0_vf0.toml \
+  --nm1=5 --k=10
+
+# muc + Uf + Uf0 + Vf0 + V0
+julia --threads=auto --project=. bin/mottjain.jl optimize \
+  --config=config/my_run.toml \
+  --override=config/optimization_profiles/mu_uf_uf0_vf0_v0.toml \
+  --nm1=5 --k=10
+```
+
+每种组合的 `free`、初值、固定值、bounds、`score_terms` 和 `score_metric` 都在
+相应 profile 中修改。结果目录使用可读的连续编号，例如
+`output/optimize/mu_uf_uf0_vf0_nm5_k10_01/`；不会再把 hash 放进目录名。
+同一配置中断后重跑会复用原编号，配置发生变化才顺延为 `_02`。真正最优的一行
+直接是该目录里的 `best.csv`。
+
+#### FSS：grid、optimize、两者都算和纯后处理
+
+```bash
+# 按 [fss].methods；默认 grid 和 optimize 都算，分开保存
+julia --threads=auto --project=. bin/mottjain.jl fss \
+  --config=config/my_run.toml \
+  --override=config/fss_profiles/fss7.toml
+
+# 只硬算 μ 网格
+julia --threads=auto --project=. bin/mottjain.jl fss \
+  --config=config/my_run.toml --override=config/fss_profiles/fss7.toml \
+  --method=grid
+
+# 只用旧 FSS 的 Brent 找每个外层点的 muc
+julia --threads=auto --project=. bin/mottjain.jl fss \
+  --config=config/my_run.toml --override=config/fss_profiles/fss7.toml \
+  --method=optimize
+
+# 算数据，再分别画图并尝试联合拟合
+julia --threads=auto --project=. bin/mottjain.jl fss-all \
+  --config=config/my_run.toml --override=config/fss_profiles/fss7.toml \
+  --method=both
+
+# 不做 ED，只读取 grid CSV 画 delta_s
+julia --project=. bin/mottjain.jl fss-plot \
+  --config=config/my_run.toml --override=config/fss_profiles/fss7.toml \
+  --method=grid --y=delta_s
+
+# 不做 ED，只读取 optimize CSV 拟合 delta_s
+julia --project=. bin/mottjain.jl fss-fit \
+  --config=config/my_run.toml --override=config/fss_profiles/fss7.toml \
+  --method=optimize --y=delta_s
+
+# 也可跳过默认目录，直接指定任意已有 CSV
+julia --project=. bin/mottjain.jl fss-plot \
+  --config=config/my_run.toml --source=/完整路径/results.csv --y=delta_s
+```
+
+#### scaling、OES 和 RSES
+
+```bash
+julia --threads=auto --project=. bin/mottjain.jl scaling --config=config/my_run.toml
+julia --threads=auto --project=. bin/mottjain.jl oes     --config=config/my_run.toml
+julia --threads=auto --project=. bin/mottjain.jl rses    --config=config/my_run.toml
+```
+
+三者都使用 `[model].nm1`、`[hamiltonian]` 和 `[solver].k`。scaling 的显示范围和
+可选 factor 在 `[scaling]`；OES/RSES 的切分和 cutoff 在 `[entanglement]`。
+
+#### 从 optimize 到 generator 再到 tower 的完整案例
+
+假设 optimize 已生成一个你认为值得继续看的 `best.csv`：
+
+```bash
+# 1. 登记为全局候选点；只写 CSV，不做 ED
+julia --project=. bin/mottjain.jl generator-register \
+  --config=config/my_run.toml \
+  --point=nm5_candidate_01 \
+  --from=output/optimize/mu_uf_uf0_vf0_nm5_k10_01/best.csv \
+  --notes="nm1=5，准备检查 generator"
+
+# 2. 建立/复用 ED，并拟合一次固定 Lambda
+julia --threads=auto --project=. bin/mottjain.jl generator \
+  --config=config/my_run.toml --point=nm5_candidate_01
+
+# 3. 修改这个 point 自己的 config/generator/nm5_candidate_01/tower.toml 后反复试
+julia --threads=auto --project=. bin/mottjain.jl tower \
+  --config=config/my_run.toml --point=nm5_candidate_01
+```
+
+登记位置永远是 `config/generator_points.csv`（除非显式用 `--registry=...`）。登记时
+还会从模板建立 `config/generator/<point_id>/generator_fit.toml` 和 `tower.toml`。
+generator 的所有数据统一放在 `output/generator/<point_id>/`；不再出现 snapshot
+hash 子目录。`ed_snapshot.jld2` 中才有完整 basis 和本征向量。
+
+只想先保存 ED、不拟合 Lambda：
+
+```bash
+julia --threads=auto --project=. bin/mottjain.jl generator \
+  --config=config/my_run.toml --point=nm5_candidate_01 --ed-only
+```
+
+之后不加 `--ed-only` 再运行同一命令，会复用 ED 并补做 Lambda 拟合。只有你明确
+改变了 `config/generator/nm5_candidate_01/generator_fit.toml` 的 S/dS 训练定义并
+希望替换旧拟合时，才运行：
+
+```bash
+julia --threads=auto --project=. bin/mottjain.jl generator \
+  --config=config/my_run.toml --point=nm5_candidate_01 --refit
+```
+
+`generator-register --replace` 会替换同名候选点，`generator --force` 会强制重做
+ED，`tower --force` 会覆盖相同 `tower_01` 后处理。这三个选项都可能替换已有
+结果，平时不要加。
+
+### generator 三个运行开关的区别
+
+generator 的三个关键开关应特别区分：
+
+| 参数 | 会不会 ED | 会不会拟合 Lambda | 用途 |
+|---|---:|---:|---|
+| 不加额外开关 | 缺快照才 ED | 缺固定 Lambda 才拟合 | 推荐日常用法 |
+| `--ed-only` | 缺快照才 ED | 否 | 先只保存/检查本征态 |
+| `--refit` | 复用已有 ED | 是，覆盖固定 Lambda | 明确改变 S/dS 训练定义 |
+| `--force` | 是，强制重算 | 是，并清除旧 tower | ED 文件疑似损坏或明确替换该 point 时才用 |
+
+### 谱、scalar/J gap 与密度
 
 ```bash
 julia --project=. bin/mottjain.jl spectrum --config=config/my_run.toml
@@ -98,59 +355,245 @@ julia --project=. bin/mottjain.jl density --config=config/my_run.toml
 `spectrum` 为每个 μ 写一个独立 CSV，最后才登记到 `summary.csv`。中断后重跑
 会根据稳定 `job_id` 跳过已完成点；加入 `--force` 可覆盖重算。
 
+`gap` 在每个 `(nm1,μ)` 只求一次谱，同时计算原始 `(L²,C₂)=(0,0)`
+列表第二项对应的 scalar gap，以及最低 `(2,3)` 态对应的 J gap。输出为
+`gap_results.csv`、`scalar_gap.png` 和 `j_gap.png`；两张图均为正方形、
+带浅色网格，纵轴范围为 `0–1.0`。`[gap].k` 默认为 5，不使用全局
+`[solver].k` 的较大设置。
+
+`density` 只保留每个 sector 的基态候选并计算全局基态的
+`⟨Nf⟩`，不再对高能态做 `L²/C₂` 分类。`[density].k` 默认为 3；
+`density.png` 为 `650×650` 的正方形图。
+
 ### 临界 μ
 
-```bash
-julia --project=. bin/mottjain.jl critical --config=config/my_run.toml
+公共的 μ 范围和 k 留在 `my_run.toml`；本次态标准放在子配置：
+
+```toml
+# config/critical_profiles/critical5.toml
+[critical]
+score_terms = ["ds_s", "j", "curlj", "dj_rank1", "t_rank2"]
+score_metric = "q"
+
+[output]
+run_name = "critical5"
 ```
 
-算法先在 `[mu_min,mu_max]` 做 coarse grid，再在最优网格点相邻区间进行 Brent
-优化。这比直接在整个区间做一次局部搜索更不容易落入坏点。
+```bash
+julia --threads=auto --project=. bin/mottjain.jl critical \
+  --config=config/my_run.toml \
+  --override=config/critical_profiles/critical5.toml
+```
 
-### 多参数优化
+程序只计算 `[critical]` 中 `mu_min`、`mu_max`、`mu_count` 生成的
+均匀网格，然后选所配置 score 最小的网格点。不调用 `Optim`，不会在两个
+网格点之间额外求谱。提供的 `critical5.toml` 就是旧
+`find_critical_point.jl` 的五项规则；`[critical].k` 默认为 10。没有选择包含
+`score_terms` 的案例 profile 时，程序会拒绝开始计算，避免无意套用错误标准。
+
+### 单参数或多参数优化
+
+下面整段属于一个 optimization profile，而不是公共 `my_run.toml`：
 
 ```toml
 [optimization]
+score_terms = ["ds_s", "dds_ds", "c2_6", "boxs_s", "j", "curlj", "dj_rank3", "t_rank1"]
+score_metric = "cost"
+algorithm = "auto"
+tie_u0_to_uf = true
+u0_over_uf = 9.0
 free = ["Uf", "Uf0", "Vf0", "V0", "mu"]
 max_iterations = 200
+
+[optimization.values]
+Uf = 0.5
+Uf0 = 3.0
+U0 = 4.5
+Vf = 0.0
+Vf0 = 0.5
+V0 = 1.0
+t = 0.5
+mu = 0.05
 
 [optimization.bounds]
 Uf = [0.0, 10.0]
 Uf0 = [0.0, 20.0]
+U0 = [0.0, 100.0]
+Vf = [-20.0, 20.0]
 Vf0 = [-20.0, 20.0]
 V0 = [-20.0, 20.0]
-mu = [-1.0, 1.0]
+t = [-10.0, 10.0]
+mu = [-100.0, 100.0]
 ```
+
+运行时必须选中相应 profile，例如：
 
 ```bash
-julia --project=. bin/mottjain.jl optimize --config=config/my_run.toml
+julia --project=. bin/mottjain.jl optimize \
+  --config=config/my_run.toml \
+  --override=config/optimization_profiles/mu_uf_uf0_vf0_v0.toml
 ```
 
-程序只对自由方向各构造一次稀疏矩阵。每次 objective evaluation 会立即追加到
-`evaluations.csv`，包括无效点和错误原因，不再静默吞掉异常。中断后重跑会从
-已有 trace 中最好的有效参数重新启动（优化器的整个 simplex 不会序列化）。
+这里三部分各司其职：
+
+- `free`：哪些参数允许优化器改变；
+- `[optimization.values]`：自由参数的初值，以及非自由参数的固定值；
+- `[optimization.bounds]`：自由参数允许的范围，非自由参数的边界不会使用。
+
+因此不需要再进源文件注释代码。比如固定 `Uf=0.5,U0=4.5,Vf=0,Vf0=0.3,t=0.5`，
+只优化 `Uf0,V0,mu`：
+
+```toml
+[optimization]
+free = ["Uf0", "V0", "mu"]
+tie_u0_to_uf = true
+
+[optimization.values]
+Uf = 0.5
+Uf0 = 3.0
+Vf = 0.0
+Vf0 = 0.3
+V0 = 1.0
+t = 0.5
+mu = 0.05
+```
+
+把 `Vf` 也加入优化只需写：
+
+```toml
+free = ["Uf", "Uf0", "Vf", "Vf0", "V0", "mu"]
+```
+
+并确保 `[optimization.bounds]` 中存在 `Vf`。如果要让 `U0` 独立优化，则写
+`tie_u0_to_uf=false`，把 `U0` 加入 `free`；若保持 `true`，程序在所有情况下都
+严格使用 `U0=u0_over_uf*Uf`，无论 `Uf` 是自由还是固定参数。
+
+你原 `optimization.jl` 中几种注释切换可直接对应为：
+
+| 原方案 | `free` | 需要在 `values` 固定的关键项 |
+|---|---|---|
+| “超级大满贯” | `Uf,Uf0,Vf0,V0,mu` | `Vf=0,t=0.5` |
+| “大满贯” | `Uf,Uf0,Vf0,mu` | `Vf=0,V0=1,t=0.5` |
+| “固定小的V” | `Uf0,V0,mu` | `Uf=0.5,Vf=0,Vf0=0.3,t=0.5` |
+| “固定大的V” | `Uf0,Vf0,mu` | `Uf=0.5,Vf=0,V0=1,t=0.5` |
+| “加Vf” | 在相应方案的 `free` 中再加入 `Vf` | 给 `Vf` 初值和 bounds |
+
+这些方案在 `tie_u0_to_uf=true` 时都会自动令 `U0=9Uf`。
+
+`algorithm="auto"` 时，一个自由参数使用有界 Brent，两个及以上使用旧
+`optimization.jl` 的 Nelder–Mead 和越界 penalty。因此 `free=["mu"]` 与 FSS
+内层寻找 μc 使用同一种 Brent 算法；FSS 仍使用专门的 `H0+μNf` 缓存入口，避免
+为每个外层点建立不必要的多参数矩阵。
+
+每次 evaluation 都会立即追加到 `evaluations.csv`，同时记录自由参数列表、算法、
+八个实际 Hamiltonian 系数、score 和错误原因。
+
+### 用小模板快速切换 optimization
+
+项目已经提供五个覆盖模板：
+
+| 文件 | 自由参数 |
+|---|---|
+| `config/optimization_profiles/mu_only.toml` | `mu` |
+| `config/optimization_profiles/mu_uf0.toml` | `Uf0,mu` |
+| `config/optimization_profiles/mu_uf0_v0.toml` | `Uf0,V0,mu` |
+| `config/optimization_profiles/mu_uf_uf0_vf0.toml` | `Uf,Uf0,Vf0,mu` |
+| `config/optimization_profiles/mu_uf_uf0_vf0_v0.toml` | `Uf,Uf0,Vf0,V0,mu` |
+
+所有模板都固定 `Vf=0`，并且各自保存 `free/values/bounds/score_terms/score_metric`。
+运行时先读取公共 `my_run.toml`，再叠加这个案例子配置。同一个模板可直接换系统
+大小和 k：
+
+```bash
+julia --threads=auto --project=. bin/mottjain.jl optimize \
+  --config=config/my_run.toml \
+  --override=config/optimization_profiles/mu_uf0_v0.toml \
+  --nm1=7 --k=12
+```
+
+把 `optimize` 临时换成 `plan` 可以先检查，不会开始求谱：
+
+```bash
+julia --project=. bin/mottjain.jl plan \
+  --config=config/my_run.toml \
+  --override=config/optimization_profiles/mu_uf0_v0.toml \
+  --nm1=7 --k=12
+```
+
+optimization 的可见目录名只使用“模板名 + nm1 + k + 连续数字”，例如
+`mu_uf0_v0_nm7_k12_01`。完整配置签名只隐藏保存在 `case_identity.toml` 中，用于
+判断重跑应该续接 `_01` 还是新建 `_02`，不会再显示成乱码。要自己指定可读前缀时
+可加 `--run-name=my_name`，得到 `my_name_01`。
+
+`mu_only.toml` 是独立 `optimize` 命令只找 μ 的模板；FSS 扫描中的 μc 仍直接用
+`fss --method=optimize`，因为它还包含 `nm_values × scan_values` 的外层循环。
 
 ### Finite-size scaling
+
+公共扫描范围留在 `my_run.toml`：
 
 ```toml
 [model]
 nm_values = [4, 5, 6, 7]
 
 [fss]
+methods = ["grid", "optimize"]
+k = 15
 scan_parameter = "Uf0"
 scan_values = [1.5, 2.0, 2.5, 3.0, 3.5, 4.0]
 mu_min = 0.0
 mu_max = 0.12
-coarse_points = 9
+mu_count = 9
+optimize_abs_tol = 1.0e-4
+optimize_max_iterations = 60
+```
+
+本次 score 放在 `config/fss_profiles/fss7.toml`：
+
+```toml
+[fss]
+score_terms = ["ds_s", "dds_ds", "boxs_s", "j", "curlj", "dj_rank1", "t_rank1"]
+score_metric = "cost"
+
+[output]
+run_name = "fss7"
 ```
 
 ```bash
-julia --project=. bin/mottjain.jl fss      --config=config/my_run.toml
-julia --project=. bin/mottjain.jl fss-plot --config=config/my_run.toml --y=delta_s
-julia --project=. bin/mottjain.jl fss-fit  --config=config/my_run.toml --y=delta_s
+# 未加 --method：按 TOML 的 methods；默认两种都算
+julia --threads=auto --project=. bin/mottjain.jl fss \
+  --config=config/my_run.toml --override=config/fss_profiles/fss7.toml
+
+# 本次命令只算固定 μ 网格
+julia --threads=auto --project=. bin/mottjain.jl fss \
+  --config=config/my_run.toml --override=config/fss_profiles/fss7.toml --method=grid
+
+# 本次命令只用旧 FSS1.jl 的 Brent 连续寻找 μc
+julia --threads=auto --project=. bin/mottjain.jl fss \
+  --config=config/my_run.toml --override=config/fss_profiles/fss7.toml --method=optimize
 ```
 
-也可用 `fss-all` 顺序完成三步。联合拟合采用
+两种方法具有相同的外层循环：逐个固定 `(nm1, scan_value)`。区别只在内层 μ：
+
+- `grid`：准确计算 `mu_count` 个 μ，取 score 最小的网格点；
+- `optimize`：在 `mu_min` 到 `mu_max` 内调用旧 `FSS1.jl` 的 Brent 搜索 μc。
+
+结果不会混在一起，分别保存为 `fss_grid_results.csv` 和
+`fss_optimize_results.csv`。因此两种结果可以直接比较，也可以分别画图：
+
+```bash
+julia --project=. bin/mottjain.jl fss-plot \
+  --config=config/my_run.toml --override=config/fss_profiles/fss7.toml --method=grid --y=delta_s
+julia --project=. bin/mottjain.jl fss-plot \
+  --config=config/my_run.toml --override=config/fss_profiles/fss7.toml --method=optimize --y=delta_s
+```
+
+若要改扫 `Vf0`，把 `scan_parameter` 改成 `"Vf0"` 并相应修改
+`scan_values`；其余 Hamiltonian 系数取 `[hamiltonian]` 中的固定值。建议复制一份
+FSS profile 并修改其中的 `run_name`，不要与 Uf0 扫描混写。
+
+`fss-all` 会在数据计算后，分别对 grid/optimize 结果画图并尝试额外的联合拟合。
+这一拟合是新项目提供的可选后处理，并不是旧 `FSS1.jl` 找 μc 的步骤。拟合采用
 
 \[
 \Delta(N,g)=\Delta_\infty+a_gN^{-\omega/2}
@@ -161,38 +604,203 @@ julia --project=. bin/mottjain.jl fss-fit  --config=config/my_run.toml --y=delta
 三个系统大小，且数据点必须多于参数数目；条件不足时会明确报错，不会生成一个
 看似正常但实际上欠定的拟合。
 
-### Scaling dimension、共形生成元和纠缠谱
+### Scaling dimension 和纠缠谱
 
 ```bash
 julia --project=. bin/mottjain.jl scaling   --config=config/my_run.toml
-julia --project=. bin/mottjain.jl generator --config=config/my_run.toml
 julia --project=. bin/mottjain.jl oes       --config=config/my_run.toml
 julia --project=. bin/mottjain.jl rses      --config=config/my_run.toml
 ```
 
 这些命令同时保存机器可读 CSV 与 PNG；向量、生成元等对象保存为 JLD2。
 
+### 共形生成元：全局参数表、ED 快照与 tower 后处理
+
+generator 不再直接使用 `[model].nm1` 和 `[hamiltonian]`。它只接受全局参数表
+`config/generator_points.csv` 中明确选中的一行，防止把 optimization A 的 `muc`
+和 optimization B 的其它耦合混在一起。
+
+参数表的核心列是：
+
+```text
+point_id, enabled, nm1,
+Uf, Uf0, U0, Vf, Vf0, V0, t, muc,
+factor, objective, q, cost, delta_s, delta_o,
+score_definition, source, notes
+```
+
+其中七个非化学势 Hamiltonian 系数是 `Uf,Uf0,U0,Vf,Vf0,V0,t`；`muc` 单独保存。
+`factor` 和各种 score 不是 ED 输入，但会跟随这个候选点进入后处理输出。
+
+#### 方法一：从 optimization 的 best.csv 登记，不手抄数值
+
+先看完某次 optimization，确认它值得研究，然后运行：
+
+```bash
+julia --project=. bin/mottjain.jl generator-register \
+  --config=config/my_run.toml \
+  --point=nm6_candidate_01 \
+  --from=output/optimize/mu_uf0_v0_nm6_k70_01/best.csv \
+  --notes="nm1=6，目前 tower 看起来最好"
+```
+
+这条命令不做 ED。它向全局 CSV 加一行，把 `mu_initial` 改名为更明确的 `muc`，
+复制七个耦合、factor、score 和来源路径；同时建立
+`config/generator/nm6_candidate_01/` 下该点自己的两个 TOML。同名 `point_id` 默认
+拒绝覆盖，避免误写；只有明确加入 `--replace` 才替换。
+
+#### 方法二：手动编辑全局 CSV
+
+也可以直接复制 `example_disabled` 那一行，修改：
+
+- `point_id`：给它一个唯一且稳定的名字；
+- `enabled=true`；
+- `nm1`、七个耦合和 `muc`；
+- 已知时填写 `factor`，不知道可以留空；
+- `notes` 写下为什么保留它。
+
+程序会严格检查必需数值、重复 point ID、NaN/Inf 和 disabled 状态，不会缺参数时
+偷偷回退到 TOML 的 `[hamiltonian]`。
+
+#### 第一阶段：固定 ED 和 microscopic Lambda
+
+运行：
+
+```bash
+julia --threads=auto --project=. bin/mottjain.jl generator \
+  --config=config/my_run.toml --point=nm6_candidate_01
+```
+
+它先保存普通四个 `(Z,R)` sector，并在 `include_adjoint=true` 时保存旧
+`for_generator_special` 使用的 SU(3) adjoint weight sector。每个本征态的完整向量和
+basis 都在 `ed_snapshot.jld2`，普通表格另存为：
+
+- `physical_levels_standard.csv`：合并等能副本后的 physical rank/member；
+- `physical_levels_adjoint.csv`：same-angular 检验所需额外 sector；
+- `snapshot_metadata.toml`：模型尺寸、全部 Hamiltonian 系数、solver 精度、basis 维数、
+  Julia/MottJainED/FuzzifiED 版本与源码签名。
+
+逐 sector 原始能量、point 参数、basis 和本征向量已经完整包含在
+`ed_snapshot.jld2`；不再额外生成重复的 `spectrum_*.csv` 和 `point.csv`。挑选
+tower 态通常只需查看两张 `physical_levels_*.csv`。
+
+随后 generator 单独读取 `config/generator/nm6_candidate_01/generator_fit.toml`，
+固定其中指定的训练态 `S→dS`，构造 18 个 microscopic 候选并拟合一次 Lambda。
+结果保存在该 point 输出目录下的 `generator/`：
+
+- `generator_fit.jld2`：固定 Lambda Terms、系数、奇异值和数值秩；
+- `generator_coefficients.csv`、`generator_summary.csv`；
+- `generator_selected_states.csv`：训练时真正使用的 S/dS。
+
+训练配置快照直接存进 `generator_fit.jld2`，不再重复生成两份 generator TOML
+元数据。
+
+普通重跑会复用这个 Lambda。如果你后来修改了 `generator_fit.toml`，程序会拒绝
+静默替换；只有明确加入 `--refit` 才会覆盖。`--ed-only` 仍可用于只保存 ED，
+但推荐的正常流程是不加它，让 generator 同时固定 Lambda。
+
+#### 第二阶段：反复试 tower 态，不重算 ED 或 Lambda
+
+```bash
+julia --threads=auto --project=. bin/mottjain.jl tower \
+  --config=config/my_run.toml --point=nm6_candidate_01
+```
+
+它读取 `config/generator/nm6_candidate_01/tower.toml`。其中：
+
+- `[states.S]` 等表定义 `family,l2,c2,rank,member`；
+- `rank` 是 `physical_levels_*.csv` 中合并副本后的 `physical_rank`；
+- `member` 选择该能级内部哪个副本，也可改用 `z=...`、`r=...`；
+- 每个 `[[overlaps]]` 定义 input、一个或多个 targets、目标角动量和计算模式；
+- 多个 targets 的 `total_overlap` 是进入整个候选子空间的权重，比强行认定某一个
+  近简并态更稳健；
+- `mode="same_angular"` 实现旧代码的 `L- → Lambda_z → L+` 检验；
+- `required=false` 的可疑关系缺态时只写 `skipped`，不会丢掉其它结果。
+
+每次修改 tower TOML 会得到可读的 `tower_01`、`tower_02` 连续目录，旧尝试不会
+覆盖。内部一致性签名只写进隐藏元数据。输出包括：
+
+- `selected_states.csv`：本次每个名字实际选中了哪个 physical rank/member/sector；
+- `tower_overlaps.csv`：逐关系、逐 target overlap 与 total overlap；
+- `analysis_metadata.toml`：point、固定 generator、factor 和本次 tower 配置快照；
+- `tower_analysis.jld2`：仅当 `save_generated_vectors=true` 时才额外保存生成后向量。
+
+运行结束后，`tower_overlaps.csv` 的主要内容还会像旧脚本一样直接打印到终端：
+每条 relation 显示 input、mode、目标 L、各 target 的 `dE/f`、overlap 和 total
+overlap。重跑并复用已有 `tower_01` 时也会再次打印，不需要手动打开 CSV。
+
+`tower` 严格不做 ED，也不重新拟合 generator；缺少任意一个固定文件都会明确
+报错并要求先运行 `generator --point=...`。
+
+可见目录只使用 `point_id`。程序仍在元数据里保存由 `nm1 + 八个 Hamiltonian 系数
++ k/容差 + adjoint 设置 + ED 源码版本` 生成的隐藏签名。若同一 point 下已有 ED
+却与当前设置冲突，程序会拒绝复用；通常应换一个新的 point_id。只有明确使用
+`generator --force` 才会替换这个 point 的旧 ED。
+由于旧 Lambda 和 tower 不可能再与新本征向量一一对应，`--force` 会同步清除该
+point 下面旧的 `generator/` 与 `tower/`，随后重新拟合 Lambda。
+
 ## 5. CFT tower score
 
-默认七个关系为：
+这一节是一个仍待物理确认的独立分析标准；基础 `spectrum` 和 `scaling` 不会
+再自动把它当作已确定的结论。`critical/optimize/fss` 仍以它为目标时，必须把
+结果视为依赖当前态认定的试验性输出。
 
-1. `dS-S = 1`
-2. `ddS-dS = 1`
-3. `boxS-S = 2`
-4. `J = 2`
-5. `curlJ = 3`
-6. `dJ = 3`
-7. `T = 3`
+程序内部只有一个候选关系池。凡是会最小化 CFT score 的功能，都能在自己的案例
+子 TOML 里用 `score_terms` 任意选择其中若干项；公共 `my_run.toml` 不再保存它。
+三个旧名称只是省事的预设：
 
-程序先最小二乘拟合能量因子 `factor`，再计算 scaling-dimension 单位的 RMS 残差
-`q`。`q` 越小表示这些特定 tower 关系越接近，但它不是“存在 CFT”的充分判据；
-仍需结合跨尺寸收敛、量子数稳定性、生成元 overlap 与其它观测量。
+| 预设名称 | 原始文件 | 默认使用位置 | 默认组合 | 默认 metric |
+|---|---|---|---|---|
+| `critical5` | `find_critical_point.jl` | `[critical]` | 5 项 | `q` |
+| `fss7` | `FSS1.jl` | `[fss]` | 7 项 | `cost` |
+| `optimization8` | `optimization.jl` | `[optimization]` | 8 项 | `cost` |
 
-新版本有两个重要的分类步骤：
+日常复制相应 profile 后编辑 `score_terms`。如果完全删掉这一行，也可以用
+`score="critical5"`、`"fss7"` 或 `"optimization8"` 载入整套旧预设。
+比如 critical 只选择四项：
+
+```toml
+[critical]
+score_terms = ["ds_s", "j", "curlj", "t_rank2"]
+score_metric = "q"
+```
+
+完整候选池如下。`A-B` 表示相应原始态能量之差，`E0` 是全局基态：
+
+| `score_terms` 名称 | 数值关系 | target |
+|---|---|---:|
+| `ds_s` | `(2,0)[1]-(0,0)[2]` | 1 |
+| `dds_ds` | `(6,0)[2]-(2,0)[1]` | 1 |
+| `c2_6` | `(6,6)[1]-(2,6)[1]` | 1 |
+| `boxs_s` | `(0,0)[3]-(0,0)[2]` | 2 |
+| `boxo_o` | `(0,3)[2]-(0,3)[1]` | 2 |
+| `j` | `(2,3)[1]-E0` | 2 |
+| `curlj` | `(2,3)[3]-E0` | 3 |
+| `dj_rank1` | `(6,3)[1]-E0` | 3 |
+| `dj_rank3` | `(6,3)[3]-E0` | 3 |
+| `t_rank1` | `(6,0)[1]-E0` | 3 |
+| `t_rank2` | `(6,0)[2]-E0` | 3 |
+
+`boxo_o` 就是旧 `optimization.jl` 中曾写出但注释掉的 `□O-O`。方括号都是
+旧数组的原始 rank，不是合并 multiplet 后的 distinct rank。三套旧预设仍逐项
+复现原文件，只是现在可以在任何功能里自由增删。
+
+所有规则都会同时记录两个诊断值。`q` 是先拟合能量因子后，在 scaling-dimension
+单位中的 RMS 残差；`cost=||u||²-(u·v)²/||v||²` 是旧 FSS/optimization 使用的
+方向夹角目标。`score_metric` 决定程序真正最小化哪一个，另一项仍写入 CSV。
+这些 score 都不是“存在 CFT”的充分判据；仍需结合跨尺寸收敛、量子数稳定性、
+生成元 overlap 与其它观测量。
+
+不要只选一项：因为 `factor` 也是由同一批关系拟合的，单项时 `q` 和 `cost`
+都会恒等于零，不能用于寻找临界点。至少要有两个互相独立的关系，实际优化建议
+保留更多约束。减少 `score_terms` 本身不会显著缩短对角化；若所选项不再需要高
+rank，可以再谨慎降低该 section 的 `k`，但必须先确认所有所需态都稳定出现。
+
+量子数识别与 rank 规则：
 
 - 能量简并子空间中重新对角化 `L2`，再在同一 `L2` 子空间对角化 `C2`；
-- 同一物理 multiplet 在不同 `(Z,R)` 扇区的等能副本先合并，再按 distinct energy
-  排 rank。副本数作为 `multiplicity` 保留。
+- `cft_score` 为了复现旧文件中的数组索引，保留不同 `(Z,R)` 扇区的等能副本，
+  再按原始能量顺序取 rank；不使用 `level_catalog` 合并后的 distinct rank。
 
 容差由 `energy_tol`、`quantum_tol`、`degeneracy_tol` 控制。若结论对这些容差
 非常敏感，应把它视为诊断信号，而不是通过放宽容差隐藏。
@@ -200,21 +808,50 @@ julia --project=. bin/mottjain.jl rses      --config=config/my_run.toml
 ## 6. 输出、恢复与可追溯性
 
 ```text
-output/<run_name>/
-├── critical/
+output/
+├── spectrum/                  # 未写 run_name 时直接存这里
+├── gap/
 ├── density/
-├── fss/
-├── generator/
+├── critical/<case_name>_01/
+├── fss/<case_name>_01/
+├── optimize/
+│   └── mu_uf_uf0_vf0_nm5_k10_01/
+│       ├── evaluations.csv
+│       └── best.csv
+├── scaling/
 ├── oes/
 ├── rses/
-├── scaling/
-└── spectrum/
+└── generator/
+    └── <point_id>/
+        ├── register.log
+        ├── generator.log
+        ├── tower.log
+        ├── ed_snapshot.jld2
+        ├── physical_levels_standard.csv
+        ├── physical_levels_adjoint.csv
+        ├── snapshot_metadata.toml
+        ├── generator/
+        │   ├── generator_fit.jld2
+        │   ├── generator_coefficients.csv
+        │   ├── generator_summary.csv
+        │   └── generator_selected_states.csv
+        └── tower/
+            ├── tower_01/       # overlaps + selected states + 一份 metadata
+            └── tower_02/
 ```
 
 每个目录含 `run_metadata.toml`，记录 Julia 版本、线程数、本项目与 FuzzifiED git
 revision。长扫描按 job 追加 checkpoint；失败也会保存错误原因。
 
-不同物理方案请修改 `[output].run_name`，不要把多个方案写入同一目录：
+数值命令的普通 `@info` 进度默认不再刷终端，而是追加到该任务目录的
+`run.log`。终端启动时只显示一次日志路径，之后只保留 warning、error 和未捕获
+异常。generator 三步分别使用 `register.log/generator.log/tower.log`；tower 的最终
+overlap 表是有意保留的终端短输出。optimization
+的每次参数 evaluation 仍会写 `evaluations.csv`；关闭终端 trace 不会丢失优化历史。
+`plan` 是给人直接阅读的短输出，仍显示在终端。
+
+普通功能如需区分多个案例，可以在其子 profile 写 `run_name`。同一功能相关配置
+不变时重跑会复用 `_01`；相关配置改变后自动顺延 `_02`：
 
 ```toml
 [output]
@@ -271,7 +908,10 @@ s = SolverSettings(k=30)
 model = build_model(nm1=5)
 cache = prepare_spectrum(model, c, s)
 states = solve_spectrum(cache, c.mu)
-score = cft_score(states; settings=s)
+score = cft_score(
+    states; settings=s,
+    terms=[:ds_s, :j, :curlj, :dj_rank1, :t_rank2], metric=:q,
+)
 ```
 
 加载包只定义功能，不会自动开始任何扫描。

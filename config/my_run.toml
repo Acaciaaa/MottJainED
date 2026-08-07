@@ -3,24 +3,24 @@
 
 [model]
 # 单尺寸功能（spectrum/density/scaling/oes/rses）使用 nm1；generator 从 point 读取。
-nm1 = 5
+nm1 = 6
 # 跨尺寸功能（gap/fss）使用 nm_values。
-nm_values = [4, 5]
+nm_values = [4, 5, 6]
 
 [hamiltonian]
 # H = Uf nf² + Uf0 nf n0 + U0 n0²
-Uf = 0.5
-Uf0 = 1.8
-U0 = 4.5
+Uf = 0.844
+Uf0 = 3.308
+U0 = 7.592
 #     + Vf nf Δnf + Vf0 n0 Δnf + V0 n0 Δn0
 Vf = 0.0
-Vf0 = 0.4
+Vf0 = 0.6
 V0 = 1.0
 #     - t(f0† f1 f2 f3 + h.c.) + mu Nf
 t = 0.5
 # spectrum/density/scaling/纠缠谱直接使用这里的 mu；generator 改从全局 CSV 读取 muc。
 # critical 使用自己的固定 mu 网格；fss 使用自己的范围并按 methods 选择处理方式。
-mu = 0.05
+mu = 0.221
 
 [solver]
 # 每个 (Z,R) 离散对称扇区要求的低能本征态数。
@@ -52,30 +52,30 @@ mu_count = 13
 # 沿用旧 ES_mu.jl，每个 sector 只需少量低能态；同一次求谱提取 scalar 与 J gap。
 k = 5
 mu_min = 0.0
-mu_max = 0.12
-mu_count = 13
+mu_max = 0.4
+mu_count = 20
 
 [density]
 # 只需在每个 sector 找基态；沿用旧 particle_density_mu.jl 的 k=3。
 k = 3
-mu_min = -0.5
-mu_max = 0.5
-mu_count = 21
+mu_min = 0.0
+mu_max = 0.4
+mu_count = 20
 
 [critical]
 # 固定 U/V/t，只计算以下 mu 网格，选择所配置 score 的最小点；不调用 Optim。
 k = 10
-# score_terms/score_metric 属于具体案例，放在 config/critical_profiles/*.toml。
-mu_min = 0.0
-mu_max = 0.12
-mu_count = 9
+# score_terms/score_metric 放在本次使用的 critical profile 子 TOML。
+mu_min = 0.15
+mu_max = 0.25
+mu_count = 10
 
 [fss]
 # 默认同时做固定 mu 网格和旧 FSS1 Brent 优化。
 # 若只要一种，可写 methods = ["grid"] 或 methods = ["optimize"]。
 methods = ["grid", "optimize"]
 k = 15
-# score_terms/score_metric 属于具体案例，放在 config/fss_profiles/*.toml。
+# score_terms/score_metric 放在本次使用的 FSS profile 子 TOML。
 scan_parameter = "Uf0"
 scan_values = [1.5, 2.0, 2.5, 3.0, 3.5, 4.0]
 mu_min = 0.0
@@ -85,8 +85,8 @@ optimize_abs_tol = 1.0e-4
 optimize_max_iterations = 60
 
 [optimization]
-# 公共优化器设置；free/values/bounds/score_terms 放在 optimization_profiles 子 TOML。
-k = 70
+# 公共优化器设置；free/values/bounds/score_terms 由 optimization profile 覆盖。
+k = 8
 # auto：一个自由参数用 Brent，两个及以上用旧 NelderMead。
 algorithm = "auto"
 abs_tol = 1.0e-4
@@ -94,7 +94,7 @@ tie_u0_to_uf = true
 u0_over_uf = 9.0
 penalty = 1.0e6
 max_iterations = 200
-# free、values、bounds 和 score 都必须由 optimization_profiles 中的案例给出。
+# free、values、bounds 和 score 都由本次选择的 optimization profile 给出。
 
 [scaling]
 # scaling-dimension 图只保留这些 L²/C₂ 范围内的态。
@@ -104,15 +104,13 @@ c2_max = 8.0
 # factor = 0.04  # 取消注释即可改用手动 factor
 
 [generator]
-# 全局参数点表：generator 的 nm1、七个非 mu 系数、muc、factor 只从这里选定。
+# generator 的物理参数只从全局参数点表中按 point_id 读取。
 registry = "config/generator_points.csv"
-# 每个 point 的 generator_fit.toml/tower.toml 位于 config/generator/<point_id>/。
 config_root = "config/generator"
 # 共形生成元需要保留更多低能态来识别目标 state catalog。
-k = 80
-# 保存旧 for_generator_special 使用的 SU(3) adjoint weight sector，供 same-angular 检验。
+k = 40
 include_adjoint = true
-adjoint_k = 80
+adjoint_k = 40
 
 [entanglement]
 # 实空间切分位置；0.5 是半球。
@@ -126,6 +124,5 @@ xi_cut = 10.0
 [output]
 # 相对路径以 MottJainED 根目录为准，也可写服务器绝对 scratch 路径。
 root = "output"
-# 可选：普通功能写入 output/<功能>/<run_name>_01/；配置改变后顺延 _02。
-# optimization 即使不写，也会自动使用“profile_nm_k_01”这样的可读连续编号。
+# 可选：普通功能的案例名前缀；结果会自动使用 my_case_01、my_case_02。
 # run_name = "my_case"

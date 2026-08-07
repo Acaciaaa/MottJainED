@@ -1,10 +1,34 @@
 # CLI = command-line interface（命令行接口）。这个文件不实现新的物理公式；
 # 它只把 `ARGS` 中的命令和 TOML 配置翻译成 Workflows.jl 的 Julia 函数调用。
 
-"""读取一个 TOML 配置文件，得到嵌套的 `Dict{String,Any}`。"""
-function load_config(path::AbstractString=joinpath(PACKAGE_ROOT, "config", "default.toml"))
+function _deep_merge_config!(base::Dict{String,Any}, overlay::AbstractDict)
+    for (key, value) in pairs(overlay)
+        name = String(key)
+        if value isa AbstractDict && get(base, name, nothing) isa AbstractDict
+            nested = Dict{String,Any}(String(k) => deepcopy(v) for (k, v) in pairs(base[name]))
+            base[name] = _deep_merge_config!(nested, value)
+        else
+            base[name] = deepcopy(value)
+        end
+    end
+    return base
+end
+
+"""读取基础 TOML；若给出 override，再递归覆盖其中明确写出的字段。"""
+function load_config(
+    path::AbstractString=joinpath(PACKAGE_ROOT, "config", "default.toml");
+    override=nothing,
+)
     isfile(path) || throw(ArgumentError("Configuration file not found: $path"))
-    return TOML.parsefile(path)
+    config = TOML.parsefile(path)
+    if override !== nothing
+        override_path = String(override)
+        isfile(override_path) || throw(ArgumentError(
+            "Override configuration file not found: $override_path",
+        ))
+        _deep_merge_config!(config, TOML.parsefile(override_path))
+    end
+    return config
 end
 
 # TOML 中 `[solver]` 等 section 读出后是 Dict；这两个 helper 统一处理缺省值。
@@ -59,12 +83,165 @@ function _range(section; prefix="mu")
     return collect(range(lower, upper; length=count))
 end
 
+function _output_base(config, override=nothing)
+    root = override === nothing ?
+           String(_get(_section(config, :output), :root, "output")) : String(override)
+    return isabspath(root) ? normpath(root) : normpath(joinpath(PACKAGE_ROOT, root))
+end
+
 function _output_root(config, command, override=nothing)
-    # 默认结果层级：<root>/<run_name>/<command>/；相对路径以项目根目录为准。
-    root = override === nothing ? String(_get(_section(config, :output), :root, "output")) : String(override)
-    root = isabspath(root) ? root : joinpath(PACKAGE_ROOT, root)
-    run_name = String(_get(_section(config, :output), :run_name, "default"))
-    return joinpath(root, run_name, String(command))
+    # 新层级始终“功能在前”：<root>/<command>/<可选 run_name>/。
+    # 没有 run_name 时直接写入功能目录，不增加中间默认层。
+    feature = joinpath(_output_base(config, override), String(command))
+    run_name = strip(String(_get(_section(config, :output), :run_name, "")))
+    return isempty(run_name) ? feature : joinpath(feature, run_name)
+end
+
+function _safe_case_label(label::AbstractString)
+    cleaned = replace(strip(String(label)), r"[^A-Za-z0-9_.-]+" => "_")
+    cleaned = strip(cleaned, ['_', '.', '-'])
+    isempty(cleaned) && return "run"
+    return cleaned
+end
+
+function _config_identity(config, feature=:all)
+    section_map = Dict(
+        :spectrum => ("model", "hamiltonian", "solver", "spectrum"),
+        :gap => ("model", "hamiltonian", "solver", "gap"),
+        :density => ("model", "hamiltonian", "solver", "density"),
+        :critical => ("model", "hamiltonian", "solver", "critical"),
+        :optimize => ("model", "solver", "optimization"),
+        :fss => ("model", "hamiltonian", "solver", "fss"),
+        :scaling => ("model", "hamiltonian", "solver", "scaling"),
+        :oes => ("model", "hamiltonian", "solver", "entanglement"),
+        :rses => ("model", "hamiltonian", "solver", "entanglement"),
+    )
+    if feature == :all
+        snapshot = deepcopy(config)
+        output = get!(snapshot, "output", Dict{String,Any}())
+        pop!(output, "root", nothing)
+    else
+        wanted = get(section_map, Symbol(feature), ())
+        snapshot = Dict{String,Any}(
+            name => deepcopy(config[name]) for name in wanted if haskey(config, name)
+        )
+    end
+    io = IOBuffer()
+    TOML.print(io, snapshot; sorted=true)
+    return stable_id("resolved-config-v2", String(feature), String(take!(io)))
+end
+
+"""给可变配置分配可读的 `_01/_02/...` 目录；同一配置重跑会复用原编号。"""
+function _numbered_case_output(feature_root, label, config; feature=:all)
+    ensure_output(feature_root)
+    prefix = _safe_case_label(label) * "_"
+    identity = _config_identity(config, feature)
+    maximum_index = 0
+    for name in readdir(feature_root)
+        startswith(name, prefix) || continue
+        suffix = name[(length(prefix) + 1):end]
+        isempty(suffix) && continue
+        all(isdigit, suffix) || continue
+        index = parse(Int, suffix)
+        maximum_index = max(maximum_index, index)
+        directory = joinpath(feature_root, name)
+        identity_path = joinpath(directory, "case_identity.toml")
+        if isfile(identity_path)
+            saved = TOML.parsefile(identity_path)
+            get(saved, "config_identity", "") == identity && return directory
+        end
+    end
+    directory = joinpath(feature_root, prefix * lpad(maximum_index + 1, 2, '0'))
+    ensure_output(directory)
+    atomic_toml(joinpath(directory, "case_identity.toml"), Dict(
+        "config_identity" => identity,
+        "created_at" => string(now()),
+        "label" => chop(prefix; tail=1),
+    ))
+    return directory
+end
+
+function _optimization_output(config, override_path, output_override)
+    feature_root = joinpath(_output_base(config, output_override), "optimize")
+    explicit = strip(String(_get(_section(config, :output), :run_name, "")))
+    profile = override_path === nothing ? "optimize" :
+              splitext(basename(String(override_path)))[1]
+    k = Int(_get(_section(config, :optimization), :k, 70))
+    label = isempty(explicit) ? "$(profile)_nm$(_nm1(config))_k$(k)" : explicit
+    return _numbered_case_output(feature_root, label, config; feature=:optimize)
+end
+
+function _ordinary_task_output(config, feature, output_override)
+    feature_root = joinpath(_output_base(config, output_override), String(feature))
+    run_name = strip(String(_get(_section(config, :output), :run_name, "")))
+    isempty(run_name) && return feature_root
+    return _numbered_case_output(
+        feature_root, run_name, config; feature=Symbol(feature),
+    )
+end
+
+"""配置中的相对路径统一相对 MottJainED 根目录，而不是当前 shell 目录。"""
+_project_path(path::AbstractString) = isabspath(path) ? normpath(path) : normpath(joinpath(PACKAGE_ROOT, path))
+
+function _generator_request(config, options, settings::SolverSettings; output_override=nothing)
+    section = _section(config, :generator)
+    point_id = get(options, "point", nothing)
+    point_id === nothing && throw(ArgumentError(
+        "generator/tower requires --point=POINT_ID from the global generator registry",
+    ))
+    registry = _project_path(get(
+        options, "registry", String(_get(section, :registry, "config/generator_points.csv")),
+    ))
+    data_root = haskey(options, "data-root") ? _project_path(options["data-root"]) :
+                joinpath(_output_base(config, output_override), "generator")
+    config_root = _project_path(String(_get(section, :config_root, "config/generator")))
+    template_root = joinpath(config_root, "templates")
+    case_directory = ensure_generator_case_config(
+        point_id, config_root, template_root,
+    )
+    tower_config = _project_path(get(
+        options, "tower-config", joinpath(case_directory, "tower.toml"),
+    ))
+    fit_config = _project_path(get(
+        options, "fit-config", joinpath(case_directory, "generator_fit.toml"),
+    ))
+    generator_settings = _with_k(settings, Int(_get(section, :k, 80)))
+    include_adjoint = Bool(_get(section, :include_adjoint, true))
+    adjoint_k = Int(_get(section, :adjoint_k, generator_settings.k))
+    point = load_generator_point(registry, point_id)
+    return (
+        point=point, registry=registry, data_root=data_root,
+        case_directory=case_directory,
+        tower_config=tower_config, fit_config=fit_config, settings=generator_settings,
+        include_adjoint=include_adjoint, adjoint_k=adjoint_k,
+    )
+end
+
+function _command_output_section(command)
+    command == "optimize" && return :optimize
+    command in ("fss", "fss-all", "fss-plot", "fss-fit") && return :fss
+    command in ("generator-register", "tower") && return :generator
+    return Symbol(command)
+end
+
+function _apply_cli_config_overrides!(config, command, options, override_path)
+    if haskey(options, "nm1")
+        model = get!(config, "model", Dict{String,Any}())
+        model["nm1"] = parse(Int, options["nm1"])
+    end
+    if haskey(options, "k")
+        section_name = command in ("optimize", "plan") ? "optimization" :
+                       command in ("fss", "fss-all", "fss-plot", "fss-fit") ? "fss" :
+                       command in ("generator", "tower") ? "generator" :
+                       command
+        section = get!(config, section_name, Dict{String,Any}())
+        section["k"] = parse(Int, options["k"])
+    end
+    output = get!(config, "output", Dict{String,Any}())
+    if haskey(options, "run-name")
+        output["run_name"] = options["run-name"]
+    end
+    return config
 end
 
 function _parse_cli(args)
@@ -92,41 +269,91 @@ function _print_help()
 MottJainED — 可复现的 SU(3) fuzzy-sphere 计算流程
 
 用法：
-  julia --project=. bin/mottjain.jl COMMAND [--config=FILE] [--output=DIR] [--force]
+  julia --project=. bin/mottjain.jl COMMAND [--config=FILE] [--override=FILE]
+      [--nm1=N] [--k=N] [--run-name=NAME] [--output=DIR] [--force]
 
 命令：
   plan        只显示任务大小，不进行数值计算
   spectrum    在一组 mu 上计算完整低能谱
-  gap         对多个系统大小扫描 singlet gap
+  gap         对多个系统大小扫描 scalar gap 和 J gap
   density     扫描 charge-1/charge-3 基态密度
-  critical    固定其余 Hamiltonian 参数，只优化 mu
-  optimize    同时优化选定的 Hamiltonian 参数
-  fss         生成支持断点续算的 finite-size-scaling 数据
+  critical    在给定 mu 网格上选所配置 score 的最小点
+  optimize    按 free/values/bounds 优化任意 Hamiltonian 参数组合
+  fss         FSS grid/optimize 两种 μc 方法；--method=grid|optimize|both
   fss-plot    读取已有 FSS CSV 画图，不重新计算
   fss-fit     联合拟合共享的 Delta_inf 和 omega
   fss-all     依次计算 FSS、画 delta_s、尝试联合拟合
   scaling     画一个参数点的 scaling-dimension spectrum
-  generator   拟合并保存共形生成元候选系数
+  generator-register  把选中的 optimization best.csv 加入全局参数点表
+  generator   建立/复用 ED 快照，拟合并固定保存 microscopic Lambda
+  tower       读取已有 ED 和固定 Lambda，按 tower TOML 选态并计算 overlap
   oes         orbital entanglement spectrum
   rses        real-space entanglement spectrum
   help        显示这段帮助
 
-物理和数值参数都在 config/default.toml（或其副本）中。结果按稳定 job ID
+generator 额外使用 --point=ID；加 --ed-only 只保存 ED，加 --refit 才覆盖已有
+Lambda 拟合。tower 用 --tower-config=FILE 反复尝试选态，不重新 ED/拟合 Lambda。
+
+`--override` 只覆盖小配置文件中明确写出的字段；`--nm1`、`--k` 可临时覆盖
+常用标量。物理和数值参数都在 config/default.toml（或其副本）中。结果按稳定 job ID
 断点保存；只有显式加入 --force 才重新计算已经成功的任务。
+
 """)
 end
 
 function _plan(config)
     # 只解析并展示任务规模，不建 basis、不造 Hamiltonian、不做对角化。
     spectrum = _range(_section(config, :spectrum))
+    critical = _range(_section(config, :critical))
     fss = _section(config, :fss)
     scan_values = Float64.(_get(fss, :scan_values, collect(1.5:0.5:4.0)))
+    fss_mu_count = Int(_get(fss, :mu_count, 9))
+    fss_methods = _fss_methods(fss, Dict{String,String}())
+    _, critical_terms, critical_metric = _score_options(
+        _section(config, :critical);
+        default_definition="critical5", default_metric="q",
+    )
+    _, fss_terms, fss_metric = _score_options(
+        fss; default_definition="fss7", default_metric="cost",
+    )
+    _, optimization_terms, optimization_metric = _score_options(
+        _section(config, :optimization);
+        default_definition="optimization8", default_metric="cost",
+    )
+    optimization_section = _section(config, :optimization)
+    optimization_free = Symbol.(_get(
+        optimization_section, :free, ["Uf", "Uf0", "Vf0", "V0", "mu"],
+    ))
+    optimization_algorithm = Symbol(_get(optimization_section, :algorithm, "auto"))
+    optimization_algorithm == :auto &&
+        (optimization_algorithm = length(optimization_free) == 1 ? :brent : :nelder_mead)
+    optimization_values = _optimization_couplings(config, optimization_section)
+    if Bool(_get(optimization_section, :tie_u0_to_uf, true))
+        ratio = Float64(_get(optimization_section, :u0_over_uf, 9.0))
+        optimization_values = with_coupling(
+            optimization_values, :U0, ratio * optimization_values.Uf,
+        )
+    end
     println("配置预览（这里还没有开始数值计算）")
     println("  单尺寸 nm1                 = $(_nm1(config))")
     println("  多尺寸 nm_values           = $(_nm_values(config))")
     println("  spectrum 的 mu 点数        = $(length(spectrum))")
-    println("  FSS 总任务点数              = $(length(_nm_values(config)) * length(scan_values))")
-    println("  每个 sector 的本征态数 k    = $(_solver(config).k)")
+    println("  critical 的 mu 点数        = $(length(critical))")
+    println("  FSS 外层任务点数          = $(length(_nm_values(config)) * length(scan_values))")
+    println("  FSS 方法                    = $fss_methods")
+    :grid in fss_methods && println("  FSS grid 求谱点数         = $(length(_nm_values(config)) * length(scan_values) * fss_mu_count)")
+    :optimize in fss_methods && println("  FSS optimize 求谱次数     = 由 Brent 收敛过程决定")
+    println("  通用每 sector 本征态数 k = $(_solver(config).k)")
+    println("  critical 每 sector 的 k       = $(Int(_get(_section(config, :critical), :k, 10)))")
+    println("  critical score ($(critical_metric)) = $critical_terms")
+    println("  FSS score ($(fss_metric))      = $fss_terms")
+    println("  optimize score ($(optimization_metric)) = $optimization_terms")
+    println("  optimize 每 sector 的 k   = $(Int(_get(optimization_section, :k, 70)))")
+    println("  optimize 自由参数          = $optimization_free")
+    println("  optimize 算法              = $optimization_algorithm")
+    println("  optimize 初值/固定值       = $(coupling_namedtuple(optimization_values))")
+    run_name = strip(String(_get(_section(config, :output), :run_name, "")))
+    println("  输出标签                    = $(isempty(run_name) ? "（功能目录）" : run_name)")
     println("  Julia 线程数                = $(Threads.nthreads())")
     return 0
 end
@@ -143,6 +370,51 @@ function _optimization_bounds(section, free)
     return bounds
 end
 
+function _optimization_couplings(config, section)
+    # [optimization.values] 只服务 optimize：自由参数取这里作为初值，
+    # 不在 free 中的参数取这里作为固定值；未写的项才回退到 [hamiltonian]。
+    couplings = _couplings(config)
+    values = _get(section, :values, Dict{String,Any}())
+    for (raw_name, raw_value) in pairs(values)
+        name = Symbol(raw_name)
+        name in HAMILTONIAN_FIELDS || throw(ArgumentError(
+            "Unknown parameter '$raw_name' in [optimization.values]",
+        ))
+        couplings = with_coupling(couplings, name, Float64(raw_value))
+    end
+    return validate(couplings)
+end
+
+function _score_options(section; default_definition, default_metric=nothing)
+    definition = normalize_score_definition(_get(section, :score, default_definition))
+    terms = resolve_score_terms(definition, _get(section, :score_terms, nothing))
+    metric = normalize_score_metric(
+        _get(section, :score_metric, default_metric), definition,
+    )
+    return definition, terms, metric
+end
+
+function _require_case_score(section, command)
+    (haskey(section, "score_terms") || haskey(section, "score")) && return nothing
+    throw(ArgumentError(
+        "$command requires a case profile containing score_terms. " *
+        "Pass the corresponding --override=config/..._profiles/CASE.toml file.",
+    ))
+end
+
+function _fss_methods(section, options)
+    raw = haskey(options, "method") ? options["method"] :
+          _get(section, :methods, ["grid", "optimize"])
+    names = raw isa AbstractVector ? String.(raw) : split(String(raw), ',')
+    methods = Symbol.(lowercase.(strip.(names)))
+    :both in methods && (methods = [:grid, :optimize])
+    methods = unique(methods)
+    all(method -> method in (:grid, :optimize), methods) || throw(ArgumentError(
+        "FSS method must be grid, optimize, or both",
+    ))
+    return methods
+end
+
 """
 命令行的总路由函数。
 
@@ -154,7 +426,9 @@ function main(args=ARGS)
     command, options = _parse_cli(args)
     command in ("help", "-h", "--help") && (_print_help(); return 0)
     config_path = get(options, "config", joinpath(PACKAGE_ROOT, "config", "default.toml"))
-    config = load_config(config_path)
+    override_path = get(options, "override", nothing)
+    config = load_config(config_path; override=override_path)
+    _apply_cli_config_overrides!(config, command, options, override_path)
     command == "plan" && return _plan(config)
     output_override = get(options, "output", nothing)
     force = _option_bool(options, "force", false)
@@ -165,80 +439,165 @@ function main(args=ARGS)
     configured_threads = Int(_get(solver_section, :fuzzified_threads, 0))
     FuzzifiED.NumThreads = configured_threads > 0 ? configured_threads : Threads.nthreads()
     nm1 = _nm1(config)
+    if command == "critical"
+        _require_case_score(_section(config, :critical), command)
+    elseif command == "optimize"
+        optimization_case = _section(config, :optimization)
+        _require_case_score(optimization_case, command)
+        for required_section in ("free", "values", "bounds")
+            haskey(optimization_case, required_section) || throw(ArgumentError(
+                "optimize case profile is missing [optimization].$required_section",
+            ))
+        end
+    elseif command in ("fss", "fss-all")
+        _require_case_score(_section(config, :fss), command)
+    end
+    feature = _command_output_section(command)
+    task_output = if command == "optimize"
+        _optimization_output(config, override_path, output_override)
+    elseif feature == :generator
+        point_id = get(options, "point", nothing)
+        point_id === nothing && throw(ArgumentError("$command requires --point=POINT_ID"))
+        joinpath(_output_base(config, output_override), "generator", point_id)
+    else
+        _ordinary_task_output(config, feature, output_override)
+    end
+    log_filename = command == "generator-register" ? "register.log" :
+                   feature == :generator ? "$(command).log" : "run.log"
+    logging_state = start_task_logging(task_output; filename=log_filename)
+    println("详细进度写入：$(logging_state.path)")
 
     # 从这里开始，每个 elseif 就对应用户手册中的一个可运行功能。
+    try
     if command == "spectrum"
         # Workflows.run_spectrum_scan：逐 μ 求谱与 tower score。
         run_spectrum_scan(
             nm1, _range(_section(config, :spectrum)), couplings, settings;
-            output=_output_root(config, :spectrum, output_override), force=force,
+            output=task_output, force=force,
             keep_vectors=_option_bool(options, "keep-vectors", false),
         )
     elseif command == "gap"
-        # Workflows.run_gap_scan：多个 nm1 的 singlet gap 扫描及交叉图。
+        # Workflows.run_gap_scan：多个 nm1 的 scalar/J gap 扫描及两张图。
+        section = _section(config, :gap)
+        gap_settings = _with_k(settings, Int(_get(section, :k, 5)))
         run_gap_scan(
-            _nm_values(config), _range(_section(config, :gap)), couplings, settings;
-            output=_output_root(config, :gap, output_override), force=force,
+            _nm_values(config), _range(section), couplings, gap_settings;
+            output=task_output, force=force,
         )
     elseif command == "density"
-        # Workflows.run_density_scan：基态 Nf/N0 随 μ 变化。
+        # density 只需基态，单独使用小 k，不继承全谱的较大 k。
+        section = _section(config, :density)
+        density_settings = _with_k(settings, Int(_get(section, :k, 3)))
         run_density_scan(
-            nm1, _range(_section(config, :density)), couplings, settings;
-            output=_output_root(config, :density, output_override), force=force,
+            nm1, _range(section), couplings, density_settings;
+            output=task_output, force=force,
         )
     elseif command == "critical"
-        # Workflows.run_critical_search：固定其他系数，仅优化 μ。
+        # critical 只计算配置中列出的 μ 网格，不调用 Optim。
         section = _section(config, :critical)
+        definition, terms, metric = _score_options(
+            section; default_definition="critical5", default_metric="q",
+        )
+        critical_settings = _with_k(settings, Int(_get(section, :k, 10)))
         run_critical_search(
-            nm1, couplings, settings;
-            mu_min=Float64(_get(section, :mu_min, 0.0)),
-            mu_max=Float64(_get(section, :mu_max, 0.12)),
-            coarse_points=Int(_get(section, :coarse_points, 9)),
-            output=_output_root(config, :critical, output_override),
+            nm1, _range(section), couplings, critical_settings;
+            definition=definition, terms=terms, metric=metric,
+            output=task_output,
         )
     elseif command == "optimize"
         # Workflows.run_parameter_optimization：带边界的多耦合参数优化。
         section = _section(config, :optimization)
         free = Symbol.(_get(section, :free, ["Uf", "Uf0", "Vf0", "V0", "mu"]))
+        definition, terms, metric = _score_options(
+            section; default_definition="optimization8", default_metric="cost",
+        )
+        optimization_settings = _with_k(settings, Int(_get(section, :k, 70)))
+        tie_u0 = Bool(_get(section, :tie_u0_to_uf, true))
+        optimization_couplings = _optimization_couplings(config, section)
+        optimization_output = task_output
+        write_resolved_config(
+            optimization_output, config;
+            base_config=config_path, override_config=override_path,
+        )
         run_parameter_optimization(
-            nm1, couplings, free, _optimization_bounds(section, free), settings;
+            nm1, optimization_couplings, free,
+            _optimization_bounds(section, free), optimization_settings;
             max_iterations=Int(_get(section, :max_iterations, 200)),
-            output=_output_root(config, :optimization, output_override),
+            algorithm=Symbol(_get(section, :algorithm, "auto")),
+            abs_tol=Float64(_get(section, :abs_tol, 1e-4)),
+            definition=definition, terms=terms, metric=metric,
+            u0_over_uf=tie_u0 ? Float64(_get(section, :u0_over_uf, 9.0)) : nothing,
+            penalty=Float64(_get(section, :penalty, 1.0e6)),
+            output=optimization_output,
         )
     elseif command in ("fss", "fss-all")
         # fss 只算数据；fss-all 随后还画 ΔS 并尝试联合外推。
         section = _section(config, :fss)
+        definition, terms, metric = _score_options(
+            section; default_definition="fss7", default_metric="cost",
+        )
+        methods = _fss_methods(section, options)
+        fss_settings = _with_k(settings, Int(_get(section, :k, 15)))
         fss = FSSSettings(
             nm_values=_nm_values(config),
             scan_parameter=Symbol(_get(section, :scan_parameter, "Uf0")),
             scan_values=Float64.(_get(section, :scan_values, collect(1.5:0.5:4.0))),
             mu_min=Float64(_get(section, :mu_min, 0.0)),
             mu_max=Float64(_get(section, :mu_max, 0.12)),
-            coarse_points=Int(_get(section, :coarse_points, 9)),
-            mu_abs_tol=Float64(_get(section, :mu_abs_tol, 1e-5)),
-            max_iterations=Int(_get(section, :max_iterations, 60)),
+            mu_count=Int(_get(section, :mu_count, 9)),
+            methods=methods, score_definition=definition, score_terms=terms,
+            score_metric=metric,
+            optimize_abs_tol=Float64(_get(section, :optimize_abs_tol, 1e-4)),
+            optimize_max_iterations=Int(_get(section, :optimize_max_iterations, 60)),
         )
-        directory = _output_root(config, :fss, output_override)
-        run_fss_scan(couplings, fss, settings; output=directory, force=force)
+        directory = task_output
+        run_fss_scan(couplings, fss, fss_settings; output=directory, force=force)
         if command == "fss-all"
-            source = joinpath(directory, "fss_results.csv")
-            plot_fss(source; y=:delta_s)
-            try
-                fit_fss(source; y=:delta_s)
-            catch err
-                @warn "FSS data were saved, but the joint fit is not yet identifiable" error=sanitize_error(err)
+            for method in methods
+                source = joinpath(directory, "fss_$(method)_results.csv")
+                plot_fss(
+                    source; y=:delta_s,
+                    output=joinpath(directory, "delta_s_$(method)_fss.png"),
+                )
+                try
+                    fit_fss(source; y=:delta_s, output=directory, label=String(method))
+                catch err
+                    @warn "FSS data were saved, but the joint fit is not yet identifiable" method error=sanitize_error(err)
+                end
             end
         end
     elseif command == "fss-plot"
         # 只读取已有 CSV 画图，不重新对角化。
-        source = get(options, "source", joinpath(_output_root(config, :fss, output_override), "fss_results.csv"))
+        section = _section(config, :fss)
+        methods = _fss_methods(section, options)
+        directory = task_output
         y = Symbol(get(options, "y", "delta_s"))
-        plot_fss(source; y=y)
+        if haskey(options, "source")
+            plot_fss(options["source"]; y=y)
+        else
+            for method in methods
+                plot_fss(
+                    joinpath(directory, "fss_$(method)_results.csv"); y=y,
+                    output=joinpath(directory, "$(y)_$(method)_fss.png"),
+                )
+            end
+        end
     elseif command == "fss-fit"
         # 只读取已有 CSV 拟合 Δ∞ 和 ω，不重新对角化。
-        source = get(options, "source", joinpath(_output_root(config, :fss, output_override), "fss_results.csv"))
+        section = _section(config, :fss)
+        methods = _fss_methods(section, options)
+        directory = task_output
         y = Symbol(get(options, "y", "delta_s"))
-        fit_fss(source; y=y)
+        if haskey(options, "source")
+            fit_fss(options["source"]; y=y)
+        else
+            for method in methods
+                fit_fss(
+                    joinpath(directory, "fss_$(method)_results.csv"); y=y,
+                    output=directory, label=String(method),
+                )
+            end
+        end
     elseif command == "scaling"
         # Workflows.plot_scaling_dimensions：一个参数点的低能 tower 图。
         section = _section(config, :scaling)
@@ -247,25 +606,70 @@ function main(args=ARGS)
             nm1, couplings, settings;
             factor=factor === nothing ? nothing : Float64(factor),
             l2_max=Float64(_get(section, :l2_max, 20.0)),
-            c2_max=Float64(_get(section, :c2_max, 12.0)),
-            output=_output_root(config, :scaling, output_override),
+            c2_max=Float64(_get(section, :c2_max, 8.0)),
+            output=task_output,
         )
-    elseif command == "generator"
-        # Conformal.run_generator_analysis：求更多态并拟合 microscopic Λ。
-        generator_settings = _with_k(
-            settings, Int(_get(_section(config, :generator), :k, 80)),
+    elseif command == "generator-register"
+        # 把人工确认值得研究的一次 optimization 最优点复制到全局参数表。
+        section = _section(config, :generator)
+        registry = _project_path(get(
+            options, "registry", String(_get(section, :registry, "config/generator_points.csv")),
+        ))
+        point_id = get(options, "point", nothing)
+        point_id === nothing && throw(ArgumentError("generator-register requires --point=NEW_ID"))
+        source = get(options, "from", nothing)
+        source === nothing && throw(ArgumentError("generator-register requires --from=PATH/TO/best.csv"))
+        point = register_optimization_point(
+            registry, point_id, _project_path(source);
+            notes=get(options, "notes", ""),
+            replace=_option_bool(options, "replace", false),
         )
-        run_generator_analysis(
-            nm1, couplings, generator_settings;
-            output=_output_root(config, :generator, output_override),
+        config_root = _project_path(String(_get(section, :config_root, "config/generator")))
+        case_directory = ensure_generator_case_config(
+            point.point_id, config_root, joinpath(config_root, "templates"),
         )
+        @info "registered generator point" point_id=point.point_id registry case_directory output=task_output
+    elseif command in ("generator", "tower")
+        # generator 固定 ED 和 Lambda；tower 严格只读二者，便于反复试其它态。
+        request = _generator_request(
+            config, options, settings; output_override=output_override,
+        )
+        snapshot_result = if command == "generator"
+            ensure_generator_snapshot(
+                request.point, request.settings; data_root=request.data_root,
+                include_adjoint=request.include_adjoint,
+                adjoint_k=request.adjoint_k, force=force,
+            )
+        else
+            locate_generator_snapshot(
+                request.point, request.settings; data_root=request.data_root,
+                include_adjoint=request.include_adjoint,
+                adjoint_k=request.adjoint_k,
+            )
+        end
+        if command == "generator" && _option_bool(options, "ed-only", false)
+            @info "ED-only generator task complete" point_id=request.point.point_id path=snapshot_result.path
+        elseif command == "generator"
+            run_generator_fit(
+                snapshot_result.snapshot, request.point, request.fit_config;
+                snapshot_directory=snapshot_result.directory,
+                force=_option_bool(options, "refit", false) || force,
+            )
+        else
+            fixed_generator = load_generator_fit(snapshot_result.directory)
+            run_tower_analysis(
+                snapshot_result.snapshot, request.point, request.tower_config;
+                snapshot_directory=snapshot_result.directory,
+                generator_fit=fixed_generator, force=force,
+            )
+        end
     elseif command == "oes"
         # Entanglement.run_orbital_entanglement：轨道硬切分纠缠谱。
         section = _section(config, :entanglement)
         run_orbital_entanglement(
             nm1, couplings, settings;
             xi_cut=Float64(_get(section, :xi_cut, 10.0)),
-            output=_output_root(config, :oes, output_override),
+            output=task_output,
         )
     elseif command == "rses"
         # Entanglement.run_realspace_entanglement：球冠实空间切分纠缠谱。
@@ -276,10 +680,13 @@ function main(args=ARGS)
             qa_half_window=Int(_get(section, :qa_half_window, 2)),
             lz2_cap=Int(_get(section, :lz2_cap, 14)),
             xi_cut=Float64(_get(section, :xi_cut, 10.0)),
-            output=_output_root(config, :rses, output_override),
+            output=task_output,
         )
     else
         throw(ArgumentError("Unknown command '$command'. Run the help command."))
+    end
+    finally
+        stop_task_logging(logging_state)
     end
     return 0
 end

@@ -1,0 +1,25 @@
+# 原 optimization.jl 当前启用的“超级大满贯”自由参数组合。
+# Vf=0、t=0.5 固定，U0=9Uf。
+[optimization]
+free = ["Uf", "Uf0", "Vf0", "V0", "mu"]
+score_terms = ["ds_s", "dds_ds", "c2_6", "boxs_s", "j", "curlj", "dj_rank3", "t_rank1"]
+score_metric = "cost"
+algorithm = "auto"
+tie_u0_to_uf = true
+
+[optimization.values]
+Uf = 0.5
+Uf0 = 3.0
+U0 = 4.5
+Vf = 0.0
+Vf0 = 0.5
+V0 = 1.0
+t = 0.5
+mu = 0.05
+
+[optimization.bounds]
+Uf = [0.0, 10.0]
+Uf0 = [0.0, 20.0]
+Vf0 = [-20.0, 20.0]
+V0 = [-20.0, 20.0]
+mu = [-100.0, 100.0]

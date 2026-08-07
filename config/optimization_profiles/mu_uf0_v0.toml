@@ -1,0 +1,22 @@
+# 同时优化 μc、Uf0、V0；Uf/Vf/Vf0/t 固定为 values。
+[optimization]
+free = ["Uf0", "V0", "mu"]
+score_terms = ["ds_s", "dds_ds", "c2_6", "boxs_s", "j", "curlj", "dj_rank3", "t_rank1"]
+score_metric = "cost"
+algorithm = "auto"
+tie_u0_to_uf = true
+
+[optimization.values]
+Uf = 0.5
+Uf0 = 3.0
+U0 = 4.5
+Vf = 0.0
+Vf0 = 0.4
+V0 = 1.0
+t = 0.5
+mu = 0.05
+
+[optimization.bounds]
+Uf0 = [0.0, 20.0]
+V0 = [-20.0, 20.0]
+mu = [-1.0, 1.0]

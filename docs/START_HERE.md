@@ -9,6 +9,9 @@
 4. 当前有哪些功能，每个功能经过哪些函数；
 5. 想检查或修改某一步时应打开哪个文件。
 
+需要直接复制运行命令时，请看 `docs/USER_GUIDE.md` 第 4 节“命令”：那里集中列出
+目前所有功能的案例、可改参数和输出位置；程序本身不再增加逐命令的 `--help` 层。
+
 ---
 
 ## 一、先区分三个完全不同的东西
@@ -238,7 +241,14 @@ MottJainED/
 ├── Manifest.toml            Julia 自动生成的精确依赖锁定
 ├── README.md                项目首页和文档入口
 ├── config/
-│   └── default.toml         默认物理/数值参数模板
+│   ├── default.toml         默认物理/数值参数模板
+│   ├── generator_points.csv 全局 generator 候选参数点表
+│   ├── critical_profiles/   每个 critical 案例自己的 score
+│   ├── fss_profiles/        每个 FSS 案例自己的 score
+│   ├── optimization_profiles/  free/values/bounds/score 都在案例模板内
+│   └── generator/
+│       ├── templates/       新 point 的 fit/tower 模板
+│       └── <point_id>/      该 Hamiltonian 独有的 generator_fit.toml/tower.toml
 ├── bin/
 │   └── mottjain.jl          终端命令的短入口
 ├── scripts/
@@ -249,10 +259,11 @@ MottJainED/
 │   ├── Types.jl             所有核心数据类型
 │   ├── Model.jl             物理模型与 Hamiltonian Terms
 │   ├── Spectrum.jl          basis/matrix 缓存、本征求解、量子数分类
-│   ├── CFT.jl               CFT tower score 与临界 μ 优化
+│   ├── CFT.jl               可自由组合的 CFT relation 池与固定 μ 网格选择
 │   ├── Storage.jl           CSV、metadata、job ID、断点续跑工具
 │   ├── Workflows.jl         spectrum/gap/density/critical/FSS 等完整任务
 │   ├── Conformal.jl         共形生成元候选、拟合与 overlap
+│   ├── GeneratorWorkflow.jl 全局参数表、ED 快照与 tower 后处理
 │   ├── Entanglement.jl      OES 和 RSES
 │   └── CLI.jl               把命令名字分派给 Workflows
 ├── test/
@@ -310,7 +321,8 @@ MottJainED/
 脚本最后：
 
 ```bash
-julia ... bin/mottjain.jl fss-all --config=config/default.toml
+julia ... bin/mottjain.jl fss-all --config=config/default.toml \
+  --override=config/fss_profiles/fss7.toml
 ```
 
 才是真正启动 Julia 计算的地方。
@@ -334,6 +346,8 @@ julia --project=. bin/mottjain.jl spectrum --config=config/my_run.toml
 | `bin/mottjain.jl` | 告诉 Julia 接下来执行哪个 `.jl` 文件 |
 | `spectrum` | 传给该文件的第一个普通参数，表示选择求谱功能 |
 | `--config=...` | 再传一个选项，指出本次物理参数文件 |
+| `--override=...` | 读取基础配置后，只覆盖小模板中明确写出的字段 |
+| `--nm1=7 --k=12` | 临时覆盖常改的系统大小和当前任务的 k |
 
 所以 `--project=.` 和 `bin/mottjain.jl` 不重复：前者选择“用哪些软件包”，
 后者选择“运行哪段程序”。
@@ -380,7 +394,7 @@ bin/mottjain.jl
 为什么 include 顺序重要：
 
 - `Spectrum.jl` 使用 `Types.jl` 定义的 `ModelCache`；
-- `CFT.jl` 使用 `Spectrum.jl` 的 `level_catalog`；
+- `CFT.jl` 使用 `Spectrum.jl` 生成的原始 `SpectrumState` 和量子数分类；
 - `Workflows.jl` 再组合前面所有底层函数；
 - `CLI.jl` 最后调用 Workflows。
 
@@ -457,7 +471,11 @@ Couplings(Uf, Uf0, U0, Vf, Vf0, V0, t, mu)
 保存 tower 诊断结果：
 
 - `valid`：所需能级是否齐全；
+- `definition`：`critical5`、`fss7` 或 `optimization8`；
+- `terms`：这次实际选择的 relation 名称列表；
+- `metric` / `objective`：当前工作流实际最小化 `q` 还是 `cost`；
 - `q`：tower relation 的 RMS 误差；
+- `cost`：旧 FSS/optimization 的方向夹角目标；
 - `factor`：能量到 scaling dimension 的拟合比例；
 - `delta_s`、`delta_o`；
 - 每条关系的原始 gap、理论目标和失败原因。
@@ -620,26 +638,7 @@ _eigensystem
 
 四个 sector 的结果合并、按能量排序，形成 `Vector{SpectrumState}`。
 
-### 第 6 步：计算 CFT tower score
-
-文件：`src/CFT.jl`
-
-调用：
-
-```julia
-score = cft_score(states; settings=settings)
-```
-
-先由 `level_catalog`：
-
-- 把接近整数的 `l2/c2` 分类；
-- 合并不同 `(Z,R)` 的等能副本；
-- 得到按 `(L²,C₂)` 索引的 distinct physical levels。
-
-再检查七条关系所需的能级是否齐全，拟合 `factor` 并计算 `q`、`delta_s`、
-`delta_o`。
-
-### 第 7 步：保存结果
+### 第 6 步：统一量子数标签并保存结果
 
 文件：`src/Storage.jl` 和 `src/Workflows.jl`
 
@@ -648,6 +647,8 @@ stable_id
   → 根据 nm1/mu/Hamiltonian/k 生成稳定 job_id
 
 spectrum_dataframe
+  → 在容差内把 L²/C₂ 认成整数标签
+  → 同时保留 l2_raw/c2_raw 供数值诊断
   → SpectrumState 转成长表 DataFrame
 
 atomic_csv
@@ -657,12 +658,15 @@ append_csv
   → 完成后向 summary.csv 追加一行
 ```
 
+基础 `spectrum` 不再自动套用尚未确认的 CFT tower 标准。需要研究某套 tower
+关系时，再显式调用相应的 CFT 分析。
+
 如果中断后重跑，`completed_job_ids` 从 summary.csv 找到已成功 job，直接跳过。
 
 ### spectrum 最终输出
 
 ```text
-output/<run_name>/spectrum/
+output/spectrum/<可选案例名_01>/
 ├── run_metadata.toml
 ├── summary.csv
 └── spectra/
@@ -703,41 +707,47 @@ CLI.main
        Spectrum.solve_spectrum
          → _eigensystem
          → _resolve_quantum_numbers!
-       CFT.cft_score
-         → Spectrum.level_catalog
        spectrum_dataframe
+         → 统一整数 L²/C₂ 标签并保留 raw 值
        Storage.atomic_csv / append_csv
   → summary.csv + 每个 μ 的 spectrum CSV
 ```
 
-### C. `gap`：不同尺寸的 singlet gap–μ
+### C. `gap`：不同尺寸的 scalar gap 与 J gap–μ
 
 ```text
 CLI.main
+  → 读取 [gap] 的 k（默认 5，与旧 ES_mu.jl 一致）
   → Workflows.run_gap_scan
   → 对每个 nm1：
        Model.build_model
        Spectrum.prepare_spectrum
        对每个 μ：
          Spectrum.solve_spectrum
-         Spectrum.level_catalog
          取 ground energy
-         取 (L²,C₂)=(0,0) 的第二个 distinct level
-         gap = E_singlet - E_ground
-         scaled_gap = gap*sqrt(nm1)
+         scalar_gap = 原始 (L²,C₂)=(0,0) 列表第二项 - E_ground
+         j_gap = 最低 (L²,C₂)=(2,3) 态 - E_ground
+         分别乘 sqrt(nm1)
          Storage.append_csv
-  → CairoMakie 画 singlet_gap.png
+  → gap_results.csv
+  → CairoMakie 画 scalar_gap.png 和 j_gap.png
 ```
+
+两种 gap 来自同一次求谱，所以增加 J gap 不会让每个 `(nm1,μ)`
+重复对角化。两张图都是 `650×650`、正方形坐标区、浅色网格，纵轴固定为
+`0–1.0`。
 
 ### D. `density`：基态粒子数与密度
 
 ```text
 CLI.main
+  → 读取 [density].k（默认 3，与旧 particle_density_mu.jl 一致）
   → Workflows.run_density_scan
   → Model.build_model
   → Spectrum.prepare_spectrum
   → 对每个 μ：
-       Spectrum.solve_spectrum(keep_vectors=true)
+       Spectrum.solve_ground_state
+       只比较四个 (Z,R) sector 的最低态，不做 L²/C₂ 分类
        取全局最低能态及其 Basis
        <Nf> = <ground|Nf|ground>
        N0 = (3*nm1-Nf)/3（固定总电荷约束）
@@ -745,27 +755,34 @@ CLI.main
   → density.csv + density.png
 ```
 
-### E. `critical`：固定 U/V/t 优化 μ
+`density.png` 沿用旧图的 `650×650` 正方形布局，纵轴范围为 `0–3`，
+并保留 `0,1,2` 的灰色虚线参考线。
+
+### E. `critical`：在固定 μ 网格上选最小 score
 
 ```text
 CLI.main
   → Workflows.run_critical_search
   → Model.build_model
   → Spectrum.prepare_spectrum（只做一次）
-  → CFT.optimize_mu
-       → coarse μ grid
-       → 每个 μ：solve_spectrum → cft_score
-       → 选择最佳粗网格相邻区间
-       → Optim.Brent 一维精细优化
-       → 最优 μ 再算一次完整 score
+  → CFT.scan_mu
+       → 只枚举配置的 mu_min:mu_max，mu_count 个点
+       → 每个 μ：solve_spectrum → TOML 选定的 cft_score
+       → 选 objective 最小的网格点，不调用 Optim
+  → critical_scan.csv
   → critical_point.csv
   → tower_residuals.csv
 ```
 
-### F. `optimize`：同时优化多个 Hamiltonian 参数
+`score_terms` 不放在公共 my_run 中；复制 `config/critical_profiles/critical5.toml`
+并在子配置里增删 relation，就能让 critical 使用任意组合。
+
+### F. `optimize`：优化一个或多个 Hamiltonian 参数
 
 ```text
 CLI.main
+  → _optimization_couplings
+       → [optimization.values] 覆盖本次优化的初值/固定值
   → _optimization_bounds
   → Workflows.run_parameter_optimization
   → Model.build_model
@@ -773,7 +790,8 @@ CLI.main
        → 每个 sector 构造 fixed matrix
        → 每个自由参数各构造一个 derivative matrix
        → 构造 L2/C2
-  → Optim.Fminbox(NelderMead)
+  → 一个 free：Optim.Brent
+    多个 free：Optim.NelderMead（越界点返回 penalty）
        → 每次参数 evaluation：
            _solve_linear
              → fixed + Σ parameter_i*derivative_i
@@ -783,10 +801,12 @@ CLI.main
   → best.csv
 ```
 
-如果已有 `evaluations.csv`，会读取其中最小有效 `q` 的参数作为新起点；不会恢复
-整个 Nelder–Mead simplex。
+`free` 决定哪些参数变化；`[optimization.values]` 对自由参数表示初值、对其余
+参数表示固定值。默认严格沿用旧 `optimization.jl` 当前启用的“超级大满贯”方案。
+如果已有兼容的 `evaluations.csv`，会读取其中最小有效 `objective` 的参数作为
+新起点；不会恢复整个 Nelder–Mead simplex。
 
-### G. `fss`：跨尺寸、跨耦合扫描并在每点优化 μ
+### G. `fss`：跨尺寸、跨耦合，并用两种方法找 μc
 
 ```text
 CLI.main
@@ -799,25 +819,34 @@ CLI.main
          第一个值：Spectrum.prepare_spectrum
          后续值：Spectrum.retune_spectrum!
            （复用 Basis/L2/C2/Nf，只重建 H0）
-         CFT.optimize_mu
-           → 多次 solve_spectrum → cft_score
-         Storage.append_csv
-  → fss_results.csv
+         method=grid：
+           CFT.scan_mu
+             → 只计算 mu_count 个网格点 → cft_score
+             → 选网格中 objective 最小点
+         method=optimize：
+           optimize_mu_with_score
+             → 旧 FSS1.jl 的 Brent 在范围内连续寻找 μc
+         两种方法分别 Storage.append_csv
+  → fss_grid_results.csv
+  → fss_optimize_results.csv
 ```
 
-一行结果包含：`nm1`、`scan_value`、最优 `mu`、`q`、`factor`、`delta_s`、
-`delta_o`、是否在 μ 边界、收敛状态和 Hamiltonian 全部系数。
+两种方法默认都运行。也可以在 TOML 写 `methods=["grid"]` /
+`methods=["optimize"]`，或在命令末尾临时加 `--method=grid`、
+`--method=optimize`。一行结果包含：`nm1`、`scan_value`、`muc`、`objective`、
+`q`、`cost`、`factor`、`delta_s`、`delta_o`、是否在 μ 边界和 Hamiltonian
+全部系数。
 
 ### H. `fss-plot`：只读数据画图
 
 ```text
 CLI.main
   → Workflows.plot_fss
-  → CSV.read(fss_results.csv)
+  → CSV.read(fss_grid_results.csv 或 fss_optimize_results.csv)
   → latest_rows 去除同 job 的旧记录
   → _valid_fss 只保留成功且 score_valid 的行
   → 每个 scan_value 画 y 对 nm1^(-1/2)
-  → <y>_fss.png
+  → <y>_<method>_fss.png
 ```
 
 不调用 `build_model`，不做本征求解，所以很快。
@@ -827,12 +856,12 @@ CLI.main
 ```text
 CLI.main
   → Workflows.fit_fss
-  → 读取并过滤 fss_results.csv
+  → 读取并过滤某一种 method 的 FSS CSV
   → 对给定 omega：
        建立线性 design matrix
        解析最小二乘求 Delta_inf 和每条曲线 amplitude
-  → 在 log(omega) 粗网格扫描
-  → Brent 精细优化 omega
+  → 只在 81 个固定 log(omega) 网格点中选残差最小点
+  → 不调用 Optim
   → <y>_fit.csv + <y>_fit.png
 ```
 
@@ -846,8 +875,8 @@ y(nm1,g) = Delta_inf + amplitude_g*(nm1^(-1/2))^omega
 
 ```text
 run_fss_scan
-  → plot_fss(y=delta_s)
-  → fit_fss(y=delta_s)
+  → 对每个启用的 method：plot_fss(y=delta_s)
+  → 对每个启用的 method：fit_fss(y=delta_s)
 ```
 
 只是把 G、H、I 顺序执行。
@@ -860,23 +889,28 @@ CLI.main
   → Model.build_model
   → Spectrum.prepare_spectrum
   → Spectrum.solve_spectrum(mu=hamiltonian.mu)
-  → CFT.cft_score 得到 factor（或配置手动给 factor）
+  → 按旧 scaling_dimension.jl 的五条能隙关系得到 factor（或配置手动给 factor）
   → Delta_i = (E_i-E_ground)/factor
   → ell = (sqrt(1+4L2)-1)/2
   → scaling_nm<n>.csv + scaling_nm<n>.png
 ```
 
-### L. `generator`：拟合共形生成元
+### L. `generator` 与 `tower`：先固定 ED，再反复试 tower
 
 ```text
 CLI.main
-  → Workflows.run_generator_analysis（定义在 Conformal.jl）
+  → GeneratorWorkflow.load_generator_point
+       → 只按 --point 从 config/generator_points.csv 取一行
+       → 得到 nm1、Uf/Uf0/U0/Vf/Vf0/V0/t、muc、factor
+  → GeneratorWorkflow.ensure_generator_snapshot
   → Model.build_model
   → Spectrum.prepare_spectrum
   → Spectrum.solve_spectrum(keep_vectors=true, k=generator.k)
-  → Conformal.build_conformal_store
-       → Spectrum.level_catalog
-       → 按 default_conformal_specs 选择 G/S/dS/T/J/... 波函数
+  → 可选求旧 for_generator_special 的 adjoint weight sector
+  → 原子保存 ed_snapshot.jld2
+  → 保存两张 physical_levels_*.csv 和一份可读元数据（原始向量只存一份）
+  → GeneratorWorkflow.run_generator_fit
+       → 读取 config/generator/<point_id>/generator_fit.toml 中固定的 S/dS
   → Conformal.generator_candidates
        → 构造 18 个 microscopic L=1,m=0 Terms
   → Conformal.fit_generator(S,dS,candidates)
@@ -884,13 +918,21 @@ CLI.main
        → 组成 design matrix
        → 截断 SVD 最小二乘拟合 |dS>
        → 合成 Lambda Terms 并计算 fidelity
-  → generator_coefficients.csv
-  → generator_summary.csv
-  → generator.jld2（保存向量/Terms 等复杂对象）
+  → output/generator/<point_id>/generator/generator_fit.jld2（固定保存 Lambda）
+  → tower 命令调用 GeneratorWorkflow.run_tower_analysis
+       → 只读取固定 Lambda 和 config/generator/<point_id>/tower.toml
+       → 按 family/L2/C2/physical rank/member 选择可变 tower 态
+  → 对每个 [[overlaps]] 做角动量投影和目标子空间 overlap
+  → same_angular 模式做 L- → Lambda_z → L+
+  → selected_states.csv + tower_overlaps.csv + analysis_metadata.toml
+  → 终端按 relation 打印 dE/f、overlap 与 total overlap
+  → 仅 save_generated_vectors=true 时额外保存 tower_analysis.jld2
 ```
 
-`project_angular_momentum` 和 `generator_overlap` 是后续手动研究其它 parent/descendant
-overlap 的 API；默认命令当前主要完成 (S\to\partial S) 的 generator fit。
+推荐用 `generator --point=ID` 一次固定 ED 和 Lambda，再用 `tower --point=ID` 反复
+修改其它态认定。tower 配置变化只产生 `tower_01/tower_02` 连续目录，不重复
+ED/拟合。可见数据目录始终是 point_id；隐藏签名负责检查 Hamiltonian、k/容差和
+代码版本是否真的一致。
 
 ### M. `oes`：orbital entanglement spectrum
 
@@ -972,8 +1014,8 @@ CLI.main
 
 | 函数 | 意义 |
 |---|---|
-| `cft_score` | 七条 tower relation 的 factor、q、Delta |
-| `optimize_mu` | coarse grid + Brent 优化 μ |
+| `cft_score` | 从候选 relation 池任意组合，计算 factor、q、cost、Delta |
+| `scan_mu` | 只计算用户指定的 μ 网格并选 objective 最小点 |
 | `score_dataframe` | 每条 tower residual 表格 |
 
 ### `Storage.jl`
@@ -986,6 +1028,7 @@ CLI.main
 | `completed_job_ids` | 找到已经成功的任务 |
 | `stable_id` | 根据任务参数生成稳定短哈希 |
 | `write_run_metadata` | 记录 Julia/FuzzifiED/git/线程信息 |
+| `start_task_logging` | Info 追加到 `run.log`，终端只保留 Warn/Error |
 | `latest_rows` | 同 job 多条记录只保留最后一条 |
 
 ### `Workflows.jl`
@@ -1012,7 +1055,20 @@ CLI.main
 | `fit_generator` | 截断 SVD 拟合 generator 系数 |
 | `project_angular_momentum` | 多项式投影到指定 ell |
 | `generator_overlap` | 计算生成向量落入指定目标态的权重 |
-| `run_generator_analysis` | `generator` 完整任务 |
+| `run_generator_analysis` | 旧的单点直接拟合 API；CLI 已改用快照工作流 |
+
+### `GeneratorWorkflow.jl`
+
+| 函数/类型 | 意义 |
+|---|---|
+| `GeneratorPoint` | 全局 CSV 中一行经过校验的参数点 |
+| `GeneratorEDSnapshot` | 按 sector 打包的 basis、能量、量子数和本征向量 |
+| `register_optimization_point` | 把选中的 optimization `best.csv` 登记到全局表 |
+| `ensure_generator_snapshot` | 建立或按精确身份复用 ED 快照 |
+| `locate_generator_snapshot` | tower 严格定位已有快照，不允许偷偷重算 |
+| `run_generator_fit` | 在 ED 快照上拟合一次并固定保存 Lambda |
+| `load_generator_fit` | 读取与快照绑定的固定 Lambda |
+| `run_tower_analysis` | 只用固定 Lambda，按独立 TOML 选态和计算多层 overlap |
 
 ### `Entanglement.jl`
 
@@ -1060,9 +1116,41 @@ config/my_run.toml
 
 不要改 `Project.toml`，不要改 `Manifest.toml`。
 
+### 想切换 optimization 固定/自由参数
+
+只改三处：
+
+```toml
+[optimization]
+free = ["Uf0", "V0", "mu"]
+
+[optimization.values]
+Uf = 0.5       # 不在 free：固定值
+Uf0 = 3.0      # 在 free：初值
+V0 = 1.0       # 在 free：初值
+mu = 0.05      # 在 free：初值
+
+[optimization.bounds]
+Uf0 = [0.0, 20.0]
+V0 = [-20.0, 20.0]
+mu = [-100.0, 100.0]
+```
+
+不再通过注释 `make_tms_hmt` 调用来切换方案。完整旧方案对照见
+`docs/USER_GUIDE.md` 的“单参数或多参数优化”。
+
 ### 想改变 CFT score 定义
 
-查看：
+日常选择不需要改代码，复制相应的 critical/FSS/optimization 子 profile，再在
+子 TOML 中增删列表元素：
+
+```toml
+score_terms = ["ds_s", "j", "curlj", "dj_rank1", "t_rank2"]
+score_metric = "q"        # 或 cost
+```
+
+完整候选名称和对应 `(L²,C₂,rank)` 见 `docs/USER_GUIDE.md`。只有要新增候选关系
+或改变已有候选的态定义时才查看：
 
 ```text
 src/CFT.jl → cft_score
@@ -1120,7 +1208,7 @@ src/Entanglement.jl
   → julia bin/mottjain.jl plan --config=...
   → 确认任务数量和 k
   → 本地短任务直接运行，服务器长任务用 Slurm
-  → 查看 output/<run_name>/<command>/
+  → 查看 output/<command>/<可选案例名_01>/
   → 画图/拟合命令直接读取已有 CSV，不重新对角化
 ```
 

@@ -8,7 +8,7 @@ import Pkg
 
 # @__DIR__ 是本文件所在的 MottJainED/bin；".." 回到 MottJainED 根目录。
 # activate 后，Julia 会使用根目录里的 Project.toml 和 Manifest.toml。
-Pkg.activate(normpath(joinpath(@__DIR__, "..")))
+Pkg.activate(normpath(joinpath(@__DIR__, "..")); io=devnull)
 
 # 加载 src/MottJainED.jl；该文件继续 include src 中的各功能文件。
 using MottJainED

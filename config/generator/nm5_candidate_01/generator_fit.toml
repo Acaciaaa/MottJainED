@@ -1,0 +1,23 @@
+# 新 point 注册时，本模板会复制为 config/generator/<point_id>/generator_fit.toml。
+# 这里只决定用哪两个态训练并固定 microscopic Lambda。
+
+[fit]
+source = "S"
+target = "dS"
+svd_rtol = 1.0e-10
+
+[states.S]
+name = "S"
+family = "standard"
+l2 = 0
+c2 = 0
+rank = 2
+member = 1
+
+[states.dS]
+name = "dS"
+family = "standard"
+l2 = 2
+c2 = 0
+rank = 1
+member = 1

@@ -18,8 +18,36 @@ julia --project=. bin/mottjain.jl plan
 复制并编辑 `config/default.toml` 后运行，例如：
 
 ```bash
-julia --project=. bin/mottjain.jl critical --config=config/my_run.toml
-julia --project=. bin/mottjain.jl fss-all --config=config/my_run.toml
+julia --threads=auto --project=. bin/mottjain.jl critical \
+  --config=config/my_run.toml --override=config/critical_profiles/critical5.toml
+julia --threads=auto --project=. bin/mottjain.jl fss-all \
+  --config=config/my_run.toml --override=config/fss_profiles/fss7.toml
+```
+
+optimization 可叠加小模板并临时指定尺寸，例如：
+
+```bash
+julia --threads=auto --project=. bin/mottjain.jl optimize \
+  --config=config/my_run.toml \
+  --override=config/optimization_profiles/mu_uf0_v0.toml \
+  --nm1=7 --k=12
+```
+
+共形生成元采用“全局候选点 → ED 快照 → 可反复 tower 后处理”的流程：
+
+```bash
+# 把看中的 optimization best.csv 加入 config/generator_points.csv
+julia --project=. bin/mottjain.jl generator-register \
+  --config=config/my_run.toml --point=nm6_candidate_01 \
+  --from=output/optimize/mu_uf0_v0_nm6_k70_01/best.csv
+
+# 做/复用一次昂贵 ED，并固定保存 S→dS 拟合出的 Lambda
+julia --threads=auto --project=. bin/mottjain.jl generator \
+  --config=config/my_run.toml --point=nm6_candidate_01
+
+# 修改 config/generator/nm6_candidate_01/tower.toml 后反复运行，不重算 ED/Lambda
+julia --threads=auto --project=. bin/mottjain.jl tower \
+  --config=config/my_run.toml --point=nm6_candidate_01
 ```
 
 查命令和配置参数可再看 [`docs/USER_GUIDE.md`](docs/USER_GUIDE.md)。

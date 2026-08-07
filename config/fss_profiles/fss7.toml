@@ -1,0 +1,7 @@
+# 旧 FSS1.jl 的七项标准。复制本文件即可为不同扫描建立独立案例。
+[fss]
+score_terms = ["ds_s", "dds_ds", "boxs_s", "j", "curlj", "dj_rank1", "t_rank1"]
+score_metric = "cost"
+
+[output]
+run_name = "fss7"

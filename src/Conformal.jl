@@ -54,7 +54,8 @@ default_conformal_specs() = [
     (label=:ddS, name="ddS", l2=6, c2=0, rank=2),
     (label=:J, name="J", l2=2, c2=3, rank=1),
     (label=:curlJ, name="curl J", l2=2, c2=3, rank=2),
-    (label=:dJ, name="dJ", l2=6, c2=3, rank=1),
+    # 旧 conformal_generator.jl 在配对后的 (6,3) 物理能级中把第二项标为 dJ。
+    (label=:dJ, name="dJ", l2=6, c2=3, rank=2),
 ]
 
 """

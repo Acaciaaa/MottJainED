@@ -126,7 +126,12 @@ end
 """用低能谱与预期 CFT tower 比较后得到的目标函数及诊断信息。"""
 Base.@kwdef struct CFTScore
     valid::Bool = false
-    q::Float64 = Inf       # 越小越接近目标 tower；无效时为 Inf
+    definition::Symbol = :unknown # 旧预设名；自由组合时为 custom
+    terms::Vector{Symbol} = Symbol[] # 本次实际选择的 tower relations
+    metric::Symbol = :q           # 当前 objective 使用 q 还是 cost
+    objective::Float64 = Inf      # 当前功能实际最小化的数值
+    q::Float64 = Inf       # scaling-dimension 单位的 RMS 误差
+    cost::Float64 = Inf    # 旧 FSS/optimization 使用的方向夹角 cost
     factor::Float64 = NaN  # 将有限尺寸能隙归一到 CFT 标度维数的比例
     delta_s::Float64 = NaN # 提取出的 singlet 标度维数
     delta_o::Float64 = NaN # 提取出的 order-parameter 标度维数
@@ -152,9 +157,13 @@ Base.@kwdef struct FSSSettings
     scan_values::Vector{Float64} = collect(1.5:0.5:4.0)
     mu_min::Float64 = 0.0
     mu_max::Float64 = 0.12
-    coarse_points::Int = 9
-    mu_abs_tol::Float64 = 1.0e-5
-    max_iterations::Int = 60
+    mu_count::Int = 9
+    methods::Vector{Symbol} = [:grid, :optimize]
+    score_definition::Symbol = :fss7
+    score_terms::Vector{Symbol} = Symbol[]
+    score_metric::Symbol = :cost
+    optimize_abs_tol::Float64 = 1.0e-4
+    optimize_max_iterations::Int = 60
 end
 
 # 所有允许从配置和优化器中修改的 Hamiltonian 参数名。

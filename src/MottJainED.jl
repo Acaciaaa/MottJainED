@@ -40,6 +40,7 @@ include("CFT.jl")
 include("Storage.jl")
 include("Workflows.jl")
 include("Conformal.jl")
+include("GeneratorWorkflow.jl")
 include("Entanglement.jl")
 include("CLI.jl")
 
@@ -48,7 +49,7 @@ include("CLI.jl")
 export Couplings, SolverSettings, SectorKey, ModelParameters, ModelCache,
        SpectrumState, CFTScore, ScanJob, FSSSettings,
        build_model, hamiltonian_terms, prepare_spectrum,
-       solve_spectrum, level_catalog, cft_score, optimize_mu,
+       solve_spectrum, level_catalog, cft_score, scan_mu,
        run_spectrum_scan, run_gap_scan, run_density_scan,
        run_critical_search, run_parameter_optimization,
        run_fss_scan, plot_fss, fit_fss,
@@ -56,6 +57,13 @@ export Couplings, SolverSettings, SectorKey, ModelParameters, ModelCache,
        ConformalState, ConformalStateStore, build_conformal_store,
        default_conformal_specs, generator_candidates, run_generator_analysis,
        fit_generator, generator_overlap, project_angular_momentum,
+       GeneratorPoint, StoredSectorSpectrum, GeneratorEDSnapshot,
+       ensure_generator_registry, load_generator_point,
+       register_optimization_point, ensure_generator_case_config,
+       ensure_generator_snapshot,
+       locate_generator_snapshot, load_generator_snapshot,
+       snapshot_states, run_generator_fit, load_generator_fit,
+       run_tower_analysis,
        run_orbital_entanglement, run_realspace_entanglement,
        load_config, main
 

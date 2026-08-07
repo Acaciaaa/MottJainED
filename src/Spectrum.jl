@@ -184,10 +184,54 @@ function solve_spectrum(cache::ModelCache, mu::Real; keep_vectors::Bool=false)
     return all_states
 end
 
+"""
+只求四个 `(Z,R)` sector 中的全局基态，并保留基态向量。
+
+密度只需要 `⟨ψ₀|Nf|ψ₀⟩`，因此这条路径不计算各个低能态的 `L²/C₂`，
+也不在简并子空间中做额外的量子数分类。
+"""
+function solve_ground_state(cache::ModelCache, mu::Real)
+    isfinite(mu) || throw(ArgumentError("mu must be finite"))
+    best = nothing
+    for sector in cache.sectors
+        energies, vectors = _eigensystem(sector, Float64(mu), cache.settings)
+        index = argmin(energies)
+        vector = copy(vectors[:, index])
+        cache.settings.warm_start && (sector.warm = copy(vector))
+        candidate = SpectrumState(
+            energies[index], NaN, NaN, sector.key, 1, vector, sector.basis,
+        )
+        if isnothing(best) || candidate.energy < best.energy
+            best = candidate
+        end
+    end
+    isnothing(best) && error("No ground-state candidate was found")
+    return best
+end
+
+"""把数值 Casimir 在容差内识别成整数标签；否则返回 `nothing`。"""
 function _integer_quantum_number(value::Real, tolerance::Real)
     rounded = round(Int, value)
     scale = max(1.0, abs(value), abs(rounded))
     return abs(value - rounded) <= tolerance * scale ? rounded : nothing
+end
+
+"""统一取得一个本征态的整数 `(L²,C₂)` 标签；无法可靠识别时返回 `nothing`。"""
+function _state_quantum_labels(state::SpectrumState, quantum_tol::Real)
+    l2 = _integer_quantum_number(state.l2, quantum_tol)
+    c2 = _integer_quantum_number(state.c2, quantum_tol)
+    return isnothing(l2) || isnothing(c2) ? nothing : (l2, c2)
+end
+
+"""按统一的容差整数标签选出一个 `(L²,C₂)` sector，保留原始能量顺序和副本。"""
+function _states_in_sector(
+    states::Vector{SpectrumState}, l2::Integer, c2::Integer;
+    quantum_tol::Real=2.0e-3,
+)
+    selected = filter(states) do state
+        _state_quantum_labels(state, quantum_tol) == (Int(l2), Int(c2))
+    end
+    return sort(selected; by=state -> state.energy)
 end
 
 """
@@ -204,12 +248,11 @@ function level_catalog(
     grouped = Dict{Tuple{Int,Int},Vector{SpectrumState}}()
     rejected = SpectrumState[]
     for state in states
-        l2 = _integer_quantum_number(state.l2, quantum_tol)
-        c2 = _integer_quantum_number(state.c2, quantum_tol)
-        if isnothing(l2) || isnothing(c2)
+        labels = _state_quantum_labels(state, quantum_tol)
+        if isnothing(labels)
             push!(rejected, state)
         else
-            push!(get!(grouped, (l2, c2), SpectrumState[]), state)
+            push!(get!(grouped, labels, SpectrumState[]), state)
         end
     end
 
@@ -237,12 +280,18 @@ function level_catalog(
     return catalog, rejected
 end
 
-function spectrum_dataframe(states::Vector{SpectrumState}; mu::Real, nm1::Int)
-    # 把内存中的结构体转换为便于 CSV 保存和后处理的长表格：一行一个态。
+function spectrum_dataframe(
+    states::Vector{SpectrumState}; mu::Real, nm1::Int, quantum_tol::Real=2.0e-3,
+)
+    # l2/c2 保存可靠的整数标签；l2_raw/c2_raw 同时保留原始期望值用于数值诊断。
+    labels = [_state_quantum_labels(state, quantum_tol) for state in states]
     return DataFrame(
         nm1=fill(nm1, length(states)), mu=fill(Float64(mu), length(states)),
-        energy=getfield.(states, :energy), l2=getfield.(states, :l2),
-        c2=getfield.(states, :c2), z=[state.sector.z for state in states],
+        energy=getfield.(states, :energy),
+        l2=[isnothing(label) ? missing : label[1] for label in labels],
+        c2=[isnothing(label) ? missing : label[2] for label in labels],
+        l2_raw=getfield.(states, :l2), c2_raw=getfield.(states, :c2),
+        z=[state.sector.z for state in states],
         r=[state.sector.r for state in states], rank=getfield.(states, :rank),
     )
 end

@@ -1,0 +1,3 @@
+point_id,created_at,enabled,nm1,Uf,Uf0,U0,Vf,Vf0,V0,t,muc,factor,objective,q,cost,delta_s,delta_o,score_definition,source,notes
+example_disabled,,false,6,0.844,3.308,7.592,0.0,0.6,1.0,0.5,0.221,,,,,,,,,这是格式示例；复制为新行、改 point_id 和数值并把 enabled 改成 true
+nm5_candidate_01,2026-08-07T21:46:42.081,true,5,0.9753301831077295,3.614789973892843,8.777971647969565,0.0,0.8591617029948334,1.0,0.5,0.2632959883263776,0.06536754755691679,0.01282729208407929,0.05066050928085136,0.01282729208407929,1.4618748408308635,3.0429938664025036,custom-cost-a4e472f5f3-v2,output/optimize/mu_uf_uf0_vf0_nm5_k10_01/best.csv,
