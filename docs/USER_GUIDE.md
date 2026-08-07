@@ -35,7 +35,7 @@ julia --project=. bin/mottjain.jl plan
 julia --project=. -e 'using Pkg; Pkg.test()'
 ```
 
-FuzzifiED 已在 `Project.toml`/`Manifest.toml` 中固定到核对过的 Git commit。
+FuzzifiED 已在 `Project.toml`中固定到核对过的 Git commit。
 新服务器只需 clone 本项目，然后运行：
 
 ```bash
@@ -44,8 +44,11 @@ julia --project=. scripts/setup.jl
 ```
 
 Julia 会下载固定版本的 FuzzifiED，并为服务器平台安装它的 JLL 二进制依赖；
-不要求服务器上已有相邻的 `FuzzifiED.jl`。`Manifest.toml` 记录精确版本，
-`Project.toml` 的 `[sources]` 则使 Julia 1.12 也能从指定 Git commit 恢复它。
+不要求服务器上已有相邻的 `FuzzifiED.jl`。本地Julia 1.11使用仓库中的
+`Manifest-v1.11.toml`；服务器Julia 1.12第一次安装时生成自己的
+`Manifest-v1.12.toml`。不能让1.12读取1.11的通用Manifest，否则Pkg自身的
+OpenSSL/LibSSH2依赖就可能冲突。第一次完整预编译CairoMakie等依赖可能需要
+十几分钟；看到持续出现 `✓ package` 是正常进度。
 
 ## 3. 用配置改变任务
 
@@ -973,7 +976,7 @@ workflow 按系统大小顺序执行，并为每个 radius-dependent term 显式
 
 **服务器找不到 FuzzifiED**：在项目根目录重新运行
 `julia --project=. scripts/setup.jl`。若下载失败，应在允许联网的登录节点完成
-`Pkg.instantiate()`；不要在源文件里硬编码服务器路径，也不要改回本地
+setup；网络超时可以重新执行同一命令。不要在源文件里硬编码服务器路径，也不要改回本地
 `Pkg.develop`，否则服务器和本地可能使用不同源码。
 
 **想直接使用 Julia API**：

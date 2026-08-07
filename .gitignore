@@ -1,4 +1,6 @@
 /output/
+/Manifest.toml
+/Manifest-v1.12.toml
 slurm-*.out
 *.tmp-*
 .DS_Store

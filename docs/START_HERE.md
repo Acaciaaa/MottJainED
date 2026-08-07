@@ -49,7 +49,7 @@
 | 类型 | 管什么 | 日常是否修改 |
 |---|---|---|
 | `Project.toml` | 直接软件依赖及允许版本 | 通常不改 |
-| `Manifest.toml` | 所有依赖的精确版本 | 不手动改 |
+| `Manifest-v1.11.toml` 等 | 对应 Julia minor 版本的精确依赖 | 不手动改 |
 | `config/*.toml` | 物理和数值参数 | 经常复制后修改 |
 | `src/*.jl` | 计算方法和程序逻辑 | 需要改变算法时才改 |
 
@@ -188,9 +188,9 @@ states = solve_spectrum(cache, 0.05)
 
 ---
 
-## 四、`Manifest.toml` 做什么
+## 四、版本专用 Manifest 做什么
 
-`Manifest.toml` 第一行已经写明：
+`Manifest-v1.11.toml` 第一行已经写明：
 
 ```toml
 # This file is machine-generated - editing it directly is not advised
@@ -205,7 +205,7 @@ states = solve_spectrum(cache, 0.05)
 ```
 
 但 CairoMakie 又依赖 Makie、Colors、GeometryBasics 等许多包。
-`Manifest.toml` 会记录整个依赖树的：
+Manifest 会记录整个依赖树的：
 
 - 包名；
 - 精确版本；
@@ -224,14 +224,18 @@ states = solve_spectrum(cache, 0.05)
 julia --project=. scripts/setup.jl
 ```
 
-时，`Pkg.instantiate()` 会根据 Manifest 尽量还原本地相同的软件版本。
+时，Julia会优先读取与自己版本匹配的文件。例如本地Julia 1.11读取
+`Manifest-v1.11.toml`；服务器Julia 1.12第一次运行时按`Project.toml`解析，
+`setup.jl`随后保存为`Manifest-v1.12.toml`。不同minor版本不能共用一个通用
+Manifest，因为stdlib及其JLL依赖也可能改变。
 
 可以把二者类比为：
 
 | 文件 | 类比 |
 |---|---|
 | `Project.toml` | 我需要“面粉、鸡蛋、牛奶” |
-| `Manifest.toml` | 面粉品牌/批次、鸡蛋规格、牛奶版本及所有供应链细节 |
+| `Manifest-v1.11.toml` | Julia 1.11所用面粉品牌/批次及所有供应链细节 |
+| `Manifest-v1.12.toml` | Julia 1.12自己的对应供应链细节 |
 
 ---
 
@@ -240,7 +244,7 @@ julia --project=. scripts/setup.jl
 ```text
 MottJainED/
 ├── Project.toml             Julia 直接依赖与项目身份
-├── Manifest.toml            Julia 自动生成的精确依赖锁定
+├── Manifest-v1.11.toml      本地 Julia 1.11 的精确依赖锁定
 ├── README.md                项目首页和文档入口
 ├── config/
 │   ├── default.toml         默认物理/数值参数模板
@@ -1134,7 +1138,7 @@ CLI 是 **Command Line Interface（命令行接口）**。它不做 Hamiltonian 
 config/my_run.toml
 ```
 
-不要改 `Project.toml`，不要改 `Manifest.toml`。
+不要改 `Project.toml`，不要手工改任何 `Manifest-v*.toml`。
 
 ### 想切换 optimization 固定/自由参数
 
@@ -1218,6 +1222,7 @@ src/Entanglement.jl
 ```text
 clone MottJainED 并进入项目目录
   → julia --project=. scripts/setup.jl
+  → 首次解析/预编译可能持续十几分钟
 ```
 
 一次新的物理实验：

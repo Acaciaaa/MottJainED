@@ -10,7 +10,11 @@ using DataFrames
     @test source["rev"] == "29a0cc9e06bcb5b30d3cf9f6db6416917f8a573f"
     @test !haskey(source, "path")
 
-    manifest = MottJainED.TOML.parsefile(joinpath(root, "Manifest.toml"))
+    manifest_path = joinpath(
+        root, "Manifest-v$(VERSION.major).$(VERSION.minor).toml",
+    )
+    @test isfile(manifest_path)
+    manifest = MottJainED.TOML.parsefile(manifest_path)
     fuzzified = only(manifest["deps"]["FuzzifiED"])
     @test fuzzified["git-tree-sha1"] == "fe4f9de48a7b76014281b87a385088dea0733aac"
     @test fuzzified["repo-rev"] == source["rev"]

@@ -16,6 +16,10 @@ julia --project=. scripts/setup.jl
 julia --project=. bin/mottjain.jl plan
 ```
 
+支持 Julia 1.11 和 1.12。两者使用各自的版本专用 Manifest，不能把1.11生成的
+通用 `Manifest.toml` 直接交给1.12。服务器第一次安装并预编译完整绘图依赖可能
+需要十几分钟，后续启动会快很多。
+
 复制并编辑 `config/default.toml` 后运行，例如：
 
 ```bash
