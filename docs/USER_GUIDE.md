@@ -74,12 +74,14 @@ mu = 0.05
 
 [solver]
 k = 30
-fuzzified_threads = 16
+fuzzified_threads = 0
 blas_threads = 1
 ```
 
-服务器上建议令 Julia 线程数与申请的 CPU 数一致，并保持 BLAS 为 1，避免
-FuzzifiED、Julia 和 BLAS 三层线程互相超额占用。
+`fuzzified_threads=0` 表示采用启动 Julia 时的线程数。服务器的专用 Slurm 文件
+会用自己的 `threads` 设置它，并保持 BLAS 为 1，避免 FuzzifiED、Julia 和 BLAS
+三层线程互相超额占用。由于 `sdicnormal` 的内存随申请 CPU 数增长，实际线程数
+可以小于申请 CPU 数。
 本地直接运行数值任务时建议加 `--threads=auto`；如果不加，Julia 通常只有
 1 个线程，当 `fuzzified_threads=0` 时 FuzzifiED 也会只使用 1 个线程。
 
@@ -565,8 +567,8 @@ run_name = "fss7"
 ```
 
 另有 `config/fss_profiles/fss5.toml`，使用目前统一的五项
-`["ds_s", "j", "curlj", "dj_rank1", "t_rank1"]`、`score_metric="q"`
-和 `k=10`。要跑这一套时，只把下面命令中的 `fss7.toml` 换成
+`["ds_s", "j", "curlj", "dj_rank1", "t_rank1"]`、`score_metric="cost"`
+和 `k=15`。要跑这一套时，只把下面命令中的 `fss7.toml` 换成
 `fss5.toml`；它会写到独立的 `output/fss/fss5_XX/`，不会与七项结果混合。
 
 ```bash
@@ -874,8 +876,8 @@ run_name = "uf0_scan_v3"
 ## 7. 服务器运行
 
 重计算功能分别使用 `slurm/` 中自己的作业文件。每个文件顶部有独立的
-partition、CPU、内存和 wall time，下面“用户配置区”有该功能自己的 config、
-profile 或 point。修改一次后可以反复提交，不需要重新拼命令：
+partition、CPU 和 wall time，下面“用户配置区”有该功能自己的 config、
+profile、point 和实际 `threads`。修改一次后可以反复提交，不需要重新拼命令：
 
 ```bash
 sbatch slurm/spectrum.sbatch
@@ -896,8 +898,33 @@ profile、`nm1`、`k` 则只放在 `slurm/optimize.sbatch`，二者互不影响�
 只是试跑起点，增大系统时仍需按实际峰值修改相应文件。完整说明见
 `slurm/README.md`。
 
+当前 `sdicnormal` 的 `DefMemPerCPU=7824 MB`，64 CPU 节点总内存约513024 MB。
+专用脚本因此不写 `--mem`：16 CPU约得到122 GiB，32 CPU约245 GiB，56 CPU约
+428 GiB。若为了内存申请56 CPU，可以仍写 `threads=16`；没有必要强迫
+FuzzifiED 开56线程。更多线程不一定更快，尤其在稀疏矩阵乘法受内存带宽限制时。
+
 `plan`、`generator-register`、`fss-plot`、`fss-fit` 不做昂贵 ED，通常直接在登录
 节点运行，不为它们单独申请计算节点。
+
+### 中断以后会不会从头计算
+
+同一份相关配置会回到同一个输出目录；不要加 `--force`。不同功能的断点粒度如下：
+
+| 功能 | 已完成部分是否复用 | 中断点的代价 |
+|---|---|---|
+| `spectrum` | 按每个 μ 跳过 | 正在计算的那个 μ 重算 |
+| `gap` | 按每个 `(nm1, μ)` 跳过 | 正在计算的组合重算 |
+| `density` | 按每个 μ 跳过 | 正在计算的那个 μ 重算 |
+| `fss`/`fss-all` | 按 `(method,nm1,scan_value)` 跳过 | 当前外层点内部的整段 grid 或 Brent 重算 |
+| `optimize` | 保留每次 evaluation，并从历史最佳点重新启动 | 不保存 Nelder–Mead simplex/Brent 内部状态，可能重复一些点 |
+| `generator` | 完整 `ed_snapshot.jld2` 和 Lambda 会复用 | 若在 ED 快照写完前中断，该 point 的 ED 整体重算 |
+| `tower` | 完整且配置签名相同的结果直接复用 | 未完成的 tower 本次整体重算，但不重做 ED/Lambda |
+| `critical` | 当前没有逐 μ checkpoint | 中断后整个 μ 网格重算 |
+| `scaling`、`oes`、`rses` | 当前是单次整体任务 | 中断后整体重算 |
+
+CSV/JLD2 的正式文件使用原子写入，避免被中断时留下一个看似完整的半文件。
+已经成功的离散 job 由参数生成稳定 ID；修改 `k`、系统大小或相关 Hamiltonian
+参数后，ID/案例目录会变化，不会把旧结果误当成新结果。
 
 不要在同一进程并行构造不同 `nm1`。FuzzifiED 的球面半径是全局设置；当前
 workflow 按系统大小顺序执行，并为每个 radius-dependent term 显式传
@@ -912,6 +939,23 @@ workflow 按系统大小顺序执行，并为每个 radius-dependent term 显式
 - 多参数优化：固定矩阵和每个自由参数方向各构造一次。自由参数越多内存越大；
   大尺寸内存不足时优先减少自由参数。
 - 每个离散扇区保留上一次基态，作为下一次 ARPACK 的 warm start。
+
+### 大系统怎样选择 `k`
+
+`k` 是每个离散 symmetry sector 请求的低能本征态数，不是全体系总态数。
+`score_valid=true` 只说明当前 `k` 已经找到了所选 relation 要求的 sector/rank，
+是必要条件但不是收敛证明。可靠做法是在最大 `nm1` 的代表性参数点做两到三次：
+
+1. 先用预期值，例如 `k=10`；
+2. 再用 `k=15` 或 `20`；
+3. 比较被 score 选中的各态能量/rank、`factor`、`objective` 和最终 `muc`；
+4. 连续两次增加 `k` 后这些量在所需精度内不变，才把较小的那个 `k` 用于大扫描。
+
+不能因为五项 score 的最大 raw rank 是3，就断言 `k=3` 足够：`k` 是求解器在原始
+离散 sector 中保留的态数，之后还要按近似 `(L²,C₂)` 分类，目标表示前面可能夹着
+其他态。反过来，`k` 也不必机械地随 `nm1` 成比例增长，应由上述收敛比较决定。
+提高 `k` 后，旧的较小 `k` 本征系统不能直接补算成更大的 `k`；它会作为一个新
+数值案例重新对角化，但旧数据仍保留，不会被覆盖。
 
 大尺寸仍可能很慢，因为 Hilbert 空间增长是真实的；重构消除重复构造成本，不能
 改变 Hilbert 空间的指数增长。

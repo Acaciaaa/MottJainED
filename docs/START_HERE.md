@@ -320,15 +320,18 @@ sbatch slurm/generator.sbatch
 
 ```bash
 #SBATCH --cpus-per-task=16
-#SBATCH --mem=64G
 #SBATCH --time=48:00:00
 ```
 
 向 Slurm 申请：
 
 - 16 CPU；
-- 64 GB 内存；
+- `sdicnormal` 自动随 CPU 配给约 122 GiB 内存；
 - 最长 48 小时。
+
+当前 `sdicnormal` 是每 CPU 约 7824 MB 内存，节点为64 CPU、约501 GiB；因此专用
+脚本不再写 `--mem`。例如申请56 CPU大约得到428 GiB，但可以在用户配置区保留
+`threads=16`，只让 FuzzifiED 使用16线程。申请资源数和实际计算线程不是一回事。
 
 同一个文件的“用户配置区”保存它自己的 profile、point 等少量选择。例如
 `fss.sbatch` 中：
@@ -337,10 +340,11 @@ sbatch slurm/generator.sbatch
 config="config/my_run.toml"
 profile="config/fss_profiles/fss5.toml"
 method="both"
+threads=16
 ```
 
 脚本末尾已经固定调用对应的 Julia 功能，一般不需要改。不同 `nm1` 所需内存可能
-差很多，因此各文件顶部的内存/时间只是起点；调整 `fss.sbatch` 不会改变
+差很多，因此各文件顶部的 CPU/时间只是起点；调整 `fss.sbatch` 不会改变
 `generator.sbatch`。完整文件表见 `slurm/README.md`。
 
 如果服务器不用 Slurm，就不使用这个目录。

@@ -202,9 +202,19 @@ end
     @test fss_case["output"]["run_name"] == "fss7"
     @test fss5_case["fss"]["score_terms"] ==
           ["ds_s", "j", "curlj", "dj_rank1", "t_rank1"]
-    @test fss5_case["fss"]["score_metric"] == "q"
-    @test fss5_case["fss"]["k"] == 10
+    @test fss5_case["fss"]["score_metric"] == "cost"
+    @test fss5_case["fss"]["k"] == 15
     @test fss5_case["output"]["run_name"] == "fss5"
+    mktemp() do _, plan_io
+        redirect_stdout(plan_io) do
+            MottJainED._plan(fss5_case)
+        end
+        flush(plan_io)
+        seekstart(plan_io)
+        plan_text = read(plan_io, String)
+        @test occursin("FSS 每 sector 的 k", plan_text)
+        @test occursin("= 15", plan_text)
+    end
     mktempdir() do directory
         first_case = MottJainED._ordinary_task_output(
             critical_case, :critical, directory,
