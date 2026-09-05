@@ -43,10 +43,15 @@ blas_threads = 1
 fuzzified_threads = 0 # 0 means JULIA_NUM_THREADS / Threads.nthreads()
 
 [spectrum]
-# 固定 Hamiltonian 其余参数，在这些 mu 上逐点算低能谱。
-mu_min = 0.0
-mu_max = 0.12
-mu_count = 13
+# 只在 [hamiltonian].mu 这一个点求谱；k 是每个离散 (Z,R) sector 的本征态数。
+k = 200
+# 对下面每个 (L²,C₂) 组合，横向输出最低的 levels_per_block 个不同能级。
+l2_values = [0, 2, 6]
+c2_values = [0, 3]
+levels_per_block = 7
+# 必须显式给 rescale 能标；默认 1.0 表示先查看相对基态的原始 gap。
+# 对具体参数点，请替换成已经独立确定的 factor，程序不会猜测算符身份来拟合它。
+factor = 1.0
 
 [gap]
 # 沿用旧 ES_mu.jl，每个 sector 只需少量低能态；同一次求谱提取 scalar 与 J gap。

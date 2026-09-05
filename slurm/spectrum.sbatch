@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# spectrum：单个系统大小上的完整低能谱扫描。
+# spectrum：单个系统大小、单个 mu 上筛选后的 rescaled 低能物理能级。
 #SBATCH --job-name=mj-spectrum
 #SBATCH --nodes=1
 #SBATCH --ntasks-per-node=1

@@ -3,28 +3,32 @@
 
 [model]
 # 单尺寸功能（spectrum/density/scaling/oes/rses）使用 nm1；generator 从 point 读取。
-nm1 = 6
+nm1 = 5
 # 跨尺寸功能（gap/fss）使用 nm_values。
-nm_values = [3, 4, 5]
+nm_values = [3, 4, 5, 6]
 
 [hamiltonian]
+# 原始 no-W 参数点附近的固定-rank crossing 搜索候选：
+# Uf/t=0.92；仍严格保持 U0=9Uf。V0 降到 0.525 后，再小幅降低 Uf。
 # H = Uf nf² + Uf0 nf n0 + U0 n0²
-Uf = 0.844
-Uf0 = 3.308
-U0 = 7.592
+Uf = 0.46
+Uf0 = 1.834
+U0 = 4.14
 #     + Vf nf Δnf + Vf0 n0 Δnf + V0 n0 Δn0
 Vf = 0.0
-Vf0 = 0.6
-V0 = 1.0
+Vf0 = 0.41
+V0 = 0.525
 #     - t(f0† f1 f2 f3 + h.c.) + mu Nf
 t = 0.5
 # spectrum/density/scaling/纠缠谱直接使用这里的 mu；generator 改从全局 CSV 读取 muc。
 # critical 使用自己的固定 mu 网格；fss 使用自己的范围并按 methods 选择处理方式。
-mu = 0.221
+# 这是 nm1=5 的 raw mu；对应去除 U0 冗余位移后的 mu_eff/t=-0.3275。
+# 它在共同 gap crossing 附近，并是完整固定-rank五项关系的窄网格最佳点。
+mu = 0.12177396790686024
 
 [solver]
 # 每个 (Z,R) 离散对称扇区要求的低能本征态数。
-k = 20
+k = 30
 # ARPACK 本征求解容差。
 eig_tol = 1.0e-8
 # 判定能量简并块、量子数接近整数、跨扇区等能副本的三个容差。
@@ -43,50 +47,64 @@ blas_threads = 1
 fuzzified_threads = 0 # 0 means JULIA_NUM_THREADS / Threads.nthreads()
 
 [spectrum]
-# 固定 Hamiltonian 其余参数，在这些 mu 上逐点算低能谱。
-mu_min = 0.0
-mu_max = 0.12
-mu_count = 13
+# 只在 [hamiltonian].mu=muc 这一点列出指定量子数的低能物理能级。
+k = 200
+l2_values = [0, 2, 6]
+c2_values = [0, 3]
+levels_per_block = 7
+factor = 0.04248267824856869
 
 [gap]
 # 沿用旧 ES_mu.jl，每个 sector 只需少量低能态；同一次求谱提取 scalar 与 J gap。
 k = 5
-mu_min = 0.0
-mu_max = 0.4
-mu_count = 20
+# 保持旧图约 0.4 的 raw-mu 总宽度（Δmu/t=0.8），便于肉眼判断曲率与 crossing；
+# 新候选的 scalar/J 低侧 crossing 与 minima 位于约 0.094--0.111。
+mu_min = -0.095
+mu_max = 0.305
+mu_count = 41
 
 [density]
 # 只需在每个 sector 找基态；沿用旧 particle_density_mu.jl 的 k=3。
 k = 3
-mu_min = 0.0
-mu_max = 0.4
-mu_count = 20
+# 宽于临界窗口，以便在熟悉的 density 图里看到完整台阶。
+mu_min = 0.02
+mu_max = 0.22
+mu_count = 51
 
 [critical]
 # 固定 U/V/t，只计算以下 mu 网格，选择所配置 score 的最小点；不调用 Optim。
-k = 10
-# score_terms/score_metric 放在本次使用的 critical profile 子 TOML。
-mu_min = 0.15
-mu_max = 0.25
-mu_count = 10
+k = 30
+# 固定物理 rank：S=2, dS=1, J=1, curlJ=2, dJ=1, T=1。
+# curlj 的 raw rank=3 是因为 J 的两个等能离散扇区副本排在它前面。
+score_terms = ["ds_s", "j", "curlj", "dj_rank1", "t_rank1"]
+score_metric = "q"
+mu_min = 0.105
+mu_max = 0.135
+mu_count = 31
 
 [fss]
-# 默认同时做固定 mu 网格和旧 FSS1 Brent 优化。
-# 若只要一种，可写 methods = ["grid"] 或 methods = ["optimize"]。
-methods = ["grid", "optimize"]
-k = 10
-# score_terms/score_metric 放在本次使用的 FSS profile 子 TOML。
+# 当前 no-W 候选的第一轮 FSS：像旧 FSS1.jl 一样，对每个外层参数点连续寻找 muc。
+# Uf0/Vf0 两种独立变化由 config/fss_profiles/no_w_*.toml 分开选择、分开输出。
+methods = ["optimize"]
+k = 30
+# 使用同一套固定低能物理 rank；profile 仍可显式覆盖。
+score_terms = ["ds_s", "j", "curlj", "dj_rank1", "t_rank1"]
+score_metric = "q"
+# 不加 profile 时默认做 Uf0；profile 会覆盖下面两行。
 scan_parameter = "Uf0"
-scan_values = [1.5, 2.0, 2.5, 3.0, 3.5, 4.0]
-mu_min = 0.15
-mu_max = 0.25
-mu_count = 10
+scan_values = [1.2, 1.5, 1.834, 2.2, 2.6]
+# optimize 把这两项当作 Brent 边界；范围与已检查过的 gap 扫描一致。
+# 临时 --method=grid 时则以 0.01 的步长取 41 点。
+mu_min = -0.095
+mu_max = 0.305
+mu_count = 41
 optimize_abs_tol = 1.0e-4
 optimize_max_iterations = 100
 
 [optimization]
-# 公共优化器设置；free/values/bounds/score_terms 由 optimization profile 覆盖。
-k = 8
+# 不传 profile 时，以这个局部 no-W 候选为固定基线，只重新寻找 nm1=5 的 raw mu。
+# 传入 optimization profile 后，profile 中明确写出的 free/values/bounds 会覆盖这些值。
+k = 30
 # auto：一个自由参数用 Brent，两个及以上用旧 NelderMead。
 algorithm = "auto"
 abs_tol = 1.0e-4
@@ -94,23 +112,38 @@ tie_u0_to_uf = true
 u0_over_uf = 9.0
 penalty = 1.0e6
 max_iterations = 200
-# free、values、bounds 和 score 都由本次选择的 optimization profile 给出。
+free = ["mu"]
+score_terms = ["ds_s", "j", "curlj", "dj_rank1", "t_rank1"]
+score_metric = "q"
+
+[optimization.values]
+Uf = 0.46
+Uf0 = 1.834
+U0 = 4.14
+Vf = 0.0
+Vf0 = 0.41
+V0 = 0.525
+t = 0.5
+mu = 0.12177396790686024
+
+[optimization.bounds]
+mu = [0.09, 0.14]
 
 [scaling]
 # scaling-dimension 图只保留这些 L²/C₂ 范围内的态。
 l2_max = 20.0
 c2_max = 8.0
-# 若不写 factor，程序沿用旧 scaling_dimension.jl 的五条能隙关系计算 factor。
-# factor = 0.04  # 取消注释即可改用手动 factor
+# nm1=5、mu_eff/t=-0.3275 时由固定五项 protected relations 拟合的能标。
+factor = 0.04248267824856869
 
 [generator]
 # generator 的物理参数只从全局参数点表中按 point_id 读取。
 registry = "config/generator_points.csv"
 config_root = "config/generator"
 # 共形生成元需要保留更多低能态来识别目标 state catalog。
-k = 40
+k = 80
 include_adjoint = true
-adjoint_k = 40
+adjoint_k = 80
 
 [entanglement]
 # 实空间切分位置；0.5 是半球。
@@ -125,4 +158,4 @@ xi_cut = 10.0
 # 相对路径以 MottJainED 根目录为准，也可写服务器绝对 scratch 路径。
 root = "output"
 # 可选：普通功能的案例名前缀；结果会自动使用 my_case_01、my_case_02。
-# run_name = "my_case"
+run_name = "after_gpt_nm5"

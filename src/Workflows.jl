@@ -1,65 +1,96 @@
 # 本文件是项目的“业务流程层”：把 Model/Spectrum/CFT/Storage 中的基础函数
 # 组合成用户真正会运行的 spectrum、gap、density、critical、optimization、FSS。
 
-function _summary_row(job_id, status, nm1, mu, couplings, settings, score; error="")
-    return (
-        job_id=String(job_id), status=String(status), timestamp=string(now()),
-        nm1=Int(nm1), mu=Float64(mu), q=score.q, factor=score.factor,
-        delta_s=score.delta_s, delta_o=score.delta_o,
-        score_valid=score.valid, score_reason=score.reason,
-        k=settings.k, error=String(error), coupling_namedtuple(couplings)...,
+"""
+从已经分类的本征态生成精简物理能级表。
+
+不同离散 `(Z,R)` sector 中同 `(L²,C₂)`、同能量的副本先由 `level_catalog`
+合并；能量不同的能级始终保留。每个请求的 `(L²,C₂)` 组合成为一列，列内是
+最低 `levels_per_block` 个 `rescaled_energy=(E-E₀)/factor`。列按 `C₂` 在外、
+`L²` 在内排列，方便先横向比较 singlet，再比较 adjoint；不猜测算符身份。
+"""
+function spectrum_level_table(
+    states::Vector{SpectrumState};
+    l2_values::AbstractVector{<:Integer},
+    c2_values::AbstractVector{<:Integer},
+    levels_per_block::Integer=7,
+    factor::Real,
+    quantum_tol::Real=2.0e-3,
+    degeneracy_tol::Real=2.0e-6,
+)
+    isempty(states) && throw(ArgumentError("Cannot build a spectrum table from no states"))
+    levels_per_block > 0 || throw(ArgumentError("levels_per_block must be positive"))
+    isfinite(factor) && factor > 0 || throw(ArgumentError("factor must be positive and finite"))
+
+    requested_l2 = unique(Int.(l2_values))
+    requested_c2 = unique(Int.(c2_values))
+    isempty(requested_l2) && throw(ArgumentError("l2_values must not be empty"))
+    isempty(requested_c2) && throw(ArgumentError("c2_values must not be empty"))
+
+    catalog, rejected = level_catalog(
+        states; quantum_tol=quantum_tol, degeneracy_tol=degeneracy_tol,
     )
+    ground = minimum(state.energy for state in states)
+    data = DataFrame()
+    for c2 in requested_c2, l2 in requested_l2
+        levels = get(catalog, (l2, c2), PhysicalLevel[])
+        length(levels) >= levels_per_block || throw(ArgumentError(
+            "Spectrum block (L2,C2)=($l2,$c2) has only $(length(levels)) distinct " *
+            "levels; need $levels_per_block. Increase [spectrum].k.",
+        ))
+        column = "L2=$l2 C2=$c2"
+        data[!, column] = [
+            (levels[index].energy - ground) / Float64(factor)
+            for index in 1:Int(levels_per_block)
+        ]
+    end
+    return (data=data, catalog=catalog, rejected=rejected, ground=ground)
 end
 
 """
-对一个系统大小和一列 μ 求低能谱，并保存每点的原始谱与任务摘要。
+在 `[hamiltonian].mu` 的单个参数点计算精简的 rescaled spectrum。
 
-输出 `summary.csv` 以及 `spectra/<job_id>.csv`；`force=false` 时跳过已成功
-完成的 job。只有确实需要本征向量时才设 `keep_vectors=true`，否则文件很大。
-这个基础功能不再自动套用尚未确认的 CFT tower 标准。
+本征向量只在求解过程中用于识别 `L²/C₂`，不会写入磁盘。结果固定写成
+`spectrum.csv`，与 `generator` 的 ED 快照和 tower 输出完全分开。
 """
-function run_spectrum_scan(
+function run_spectrum(
     nm1::Int,
-    mus,
     couplings::Couplings=Couplings(),
     settings::SolverSettings=SolverSettings();
+    l2_values::AbstractVector{<:Integer}=[0, 2, 6],
+    c2_values::AbstractVector{<:Integer}=[0, 3],
+    levels_per_block::Integer=7,
+    factor::Real,
     output::AbstractString=joinpath(PACKAGE_ROOT, "output", "spectrum"),
     force::Bool=false,
-    keep_vectors::Bool=false,
 )
     output = ensure_output(output)
+    scale = Float64(factor)
+    isfinite(scale) && scale > 0 || throw(ArgumentError("factor must be positive and finite"))
     write_run_metadata(output; command="spectrum")
-    summary_path = joinpath(output, "summary.csv")
-    completed = force ? Set{String}() : completed_job_ids(summary_path)
-    # model/cache 在整列 μ 上只建立一次；循环内部只重新组合 H0+μNf 并求谱。
+    path = joinpath(output, "spectrum.csv")
+    if isfile(path) && !force
+        @info "reusing spectrum" path
+        return CSV.read(path, DataFrame)
+    end
+
+    @info "computing spectrum" nm1 mu=couplings.mu k=settings.k
     model = build_model(nm1=nm1)
     cache = prepare_spectrum(model, couplings, settings)
-
-    for mu in Float64.(collect(mus))
-        job_id = stable_id("spectrum-v1", nm1, mu, coupling_vector(couplings), settings.k)
-        job_id in completed && continue
-        @info "spectrum" nm1 mu job_id
-        try
-            states = solve_spectrum(cache, mu; keep_vectors=keep_vectors)
-            score = CFTScore(q=NaN, reason="not evaluated by spectrum")
-            table = spectrum_dataframe(
-                states; mu=mu, nm1=nm1, quantum_tol=settings.quantum_tol,
-            )
-            insertcols!(table, 1, :job_id => fill(job_id, nrow(table)))
-            atomic_csv(joinpath(output, "spectra", "$job_id.csv"), table)
-            if keep_vectors
-                jldsave(joinpath(output, "spectra", "$job_id.jld2"); states=states)
-            end
-            append_csv(summary_path, _summary_row(job_id, "ok", nm1, mu, couplings, settings, score))
-        catch err
-            @error "spectrum job failed" nm1 mu exception=(err, catch_backtrace())
-            append_csv(summary_path, _summary_row(
-                job_id, "error", nm1, mu, couplings, settings, CFTScore();
-                error=sanitize_error(err),
-            ))
-        end
-    end
-    return latest_rows(CSV.read(summary_path, DataFrame))
+    states = solve_spectrum(cache, couplings.mu)
+    result = spectrum_level_table(
+        states; l2_values=l2_values, c2_values=c2_values,
+        levels_per_block=levels_per_block, factor=scale,
+        quantum_tol=settings.quantum_tol,
+        degeneracy_tol=settings.degeneracy_tol,
+    )
+    !isempty(result.rejected) && @warn(
+        "some states had non-integer L2/C2 and were excluded",
+        rejected=length(result.rejected),
+    )
+    atomic_csv(path, result.data)
+    @info "saved spectrum" path factor=scale rows=nrow(result.data)
+    return result.data
 end
 
 function _legacy_singlet_gap(states::Vector{SpectrumState}, quantum_tol::Real)

@@ -1,0 +1,8 @@
+# 当前 no-W 候选：只改变 Vf0，其余 Hamiltonian 参数取 config/my_run.toml。
+# 保留旧 FSS1.jl 的 0--1 大范围，并显式包含当前 Vf0=0.41。
+[fss]
+scan_parameter = "Vf0"
+scan_values = [0.0, 0.2, 0.41, 0.7, 1.0]
+
+[output]
+run_name = "no_w_vf0"

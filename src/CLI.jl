@@ -274,7 +274,7 @@ MottJainED — 可复现的 SU(3) fuzzy-sphere 计算流程
 
 命令：
   plan        只显示任务大小，不进行数值计算
-  spectrum    在一组 mu 上计算完整低能谱
+  spectrum    在 hamiltonian.mu 计算筛选后的 rescaled 低能物理能级
   gap         对多个系统大小扫描 scalar gap 和 J gap
   density     扫描 charge-1/charge-3 基态密度
   critical    在给定 mu 网格上选所配置 score 的最小点
@@ -303,12 +303,15 @@ end
 
 function _plan(config)
     # 只解析并展示任务规模，不建 basis、不造 Hamiltonian、不做对角化。
-    spectrum = _range(_section(config, :spectrum))
+    spectrum = _section(config, :spectrum)
     critical = _range(_section(config, :critical))
     fss = _section(config, :fss)
     scan_values = Float64.(_get(fss, :scan_values, collect(1.5:0.5:4.0)))
     fss_mu_count = Int(_get(fss, :mu_count, 9))
     fss_methods = _fss_methods(fss, Dict{String,String}())
+    fss_parameter = String(_get(fss, :scan_parameter, "Uf0"))
+    fss_mu_min = Float64(_get(fss, :mu_min, 0.0))
+    fss_mu_max = Float64(_get(fss, :mu_max, 0.12))
     _, critical_terms, critical_metric = _score_options(
         _section(config, :critical);
         default_definition="critical5", default_metric="q",
@@ -337,9 +340,16 @@ function _plan(config)
     println("配置预览（这里还没有开始数值计算）")
     println("  单尺寸 nm1                 = $(_nm1(config))")
     println("  多尺寸 nm_values           = $(_nm_values(config))")
-    println("  spectrum 的 mu 点数        = $(length(spectrum))")
+    println("  spectrum 的 mu             = $(_couplings(config).mu)")
+    println("  spectrum 的 L2             = $(Int.(_get(spectrum, :l2_values, [0, 2, 6])))")
+    println("  spectrum 的 C2             = $(Int.(_get(spectrum, :c2_values, [0, 3])))")
+    println("  spectrum 每个 (L2,C2) 数量 = $(Int(_get(spectrum, :levels_per_block, 7)))")
+    println("  spectrum 每 sector 的 k    = $(Int(_get(spectrum, :k, _solver(config).k)))")
     println("  critical 的 mu 点数        = $(length(critical))")
     println("  FSS 外层任务点数          = $(length(_nm_values(config)) * length(scan_values))")
+    println("  FSS 外层参数               = $fss_parameter")
+    println("  FSS 参数点                 = $scan_values")
+    println("  FSS mu 范围                = [$fss_mu_min, $fss_mu_max]")
     println("  FSS 方法                    = $fss_methods")
     :grid in fss_methods && println("  FSS grid 求谱点数         = $(length(_nm_values(config)) * length(scan_values) * fss_mu_count)")
     :optimize in fss_methods && println("  FSS optimize 求谱次数     = 由 Brent 收敛过程决定")
@@ -471,11 +481,25 @@ function main(args=ARGS)
     # 从这里开始，每个 elseif 就对应用户手册中的一个可运行功能。
     try
     if command == "spectrum"
-        # Workflows.run_spectrum_scan：逐 μ 求谱与 tower score。
-        run_spectrum_scan(
-            nm1, _range(_section(config, :spectrum)), couplings, settings;
+        # 单个 mu 的精简物理能级表；不保存本征向量，也不猜测算符身份。
+        section = _section(config, :spectrum)
+        spectrum_settings = _with_k(settings, Int(_get(section, :k, settings.k)))
+        haskey(section, "factor") || throw(ArgumentError(
+            "spectrum requires an explicit positive [spectrum].factor; " *
+            "it will not infer a scale from tentative operator identities",
+        ))
+        factor = Float64(_get(section, :factor, NaN))
+        write_resolved_config(
+            task_output, config;
+            base_config=config_path, override_config=override_path,
+        )
+        run_spectrum(
+            nm1, couplings, spectrum_settings;
+            l2_values=Int.(_get(section, :l2_values, [0, 2, 6])),
+            c2_values=Int.(_get(section, :c2_values, [0, 3])),
+            levels_per_block=Int(_get(section, :levels_per_block, 7)),
+            factor=factor,
             output=task_output, force=force,
-            keep_vectors=_option_bool(options, "keep-vectors", false),
         )
     elseif command == "gap"
         # Workflows.run_gap_scan：多个 nm1 的 scalar/J gap 扫描及两张图。

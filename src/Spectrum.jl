@@ -279,19 +279,3 @@ function level_catalog(
     end
     return catalog, rejected
 end
-
-function spectrum_dataframe(
-    states::Vector{SpectrumState}; mu::Real, nm1::Int, quantum_tol::Real=2.0e-3,
-)
-    # l2/c2 保存可靠的整数标签；l2_raw/c2_raw 同时保留原始期望值用于数值诊断。
-    labels = [_state_quantum_labels(state, quantum_tol) for state in states]
-    return DataFrame(
-        nm1=fill(nm1, length(states)), mu=fill(Float64(mu), length(states)),
-        energy=getfield.(states, :energy),
-        l2=[isnothing(label) ? missing : label[1] for label in labels],
-        c2=[isnothing(label) ? missing : label[2] for label in labels],
-        l2_raw=getfield.(states, :l2), c2_raw=getfield.(states, :c2),
-        z=[state.sector.z for state in states],
-        r=[state.sector.r for state in states], rank=getfield.(states, :rank),
-    )
-end

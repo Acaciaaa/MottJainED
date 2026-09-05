@@ -556,21 +556,24 @@ _solver(config)
 _nm1(config)
   → 读取单尺寸 nm1
 
-_range(config["spectrum"])
-  → 生成需要计算的 mu 数组
+config["hamiltonian"]["mu"]
+  → spectrum 只计算这个单点
+
+config["spectrum"]
+  → 读取 k、l2_values、c2_values、levels_per_block、factor
 ```
 
 然后 `main` 调用：
 
 ```julia
-run_spectrum_scan(nm1, mus, couplings, settings; output=...)
+run_spectrum(nm1, couplings, settings; output=...)
 ```
 
 ### 第 3 步：建立物理模型
 
 文件：`src/Workflows.jl`
 
-函数：`run_spectrum_scan`
+函数：`run_spectrum`
 
 首先调用：
 
@@ -596,7 +599,7 @@ charge-3: nm0=3*nm1-2, nf0=1, no0=nm0
 - (n_f,n_0,N_f,L^2,C_2,L_\pm)；
 - Hamiltonian 八个独立 Terms：`Uf/Uf0/U0/Vf/Vf0/V0/t/mu`。
 
-这一步没有选择具体 μ，也没有求本征态。
+这一步尚未求本征态。
 
 ### 第 4 步：构造可复用矩阵缓存
 
@@ -622,7 +625,7 @@ cache = prepare_spectrum(model, couplings, settings)
 4. `L2`；
 5. `C2`。
 
-因此以后每个 μ 只需要：
+在配置的单个 μ 上只需要：
 
 ```text
 H(mu) = H0 + mu*Nf
@@ -633,12 +636,12 @@ H(mu) = H0 + mu*Nf
 `lower_sparse` 会把 FuzzifiED 的非排序 CSC-like 存储 canonicalize，避免稀疏加法
 漏元素；`hermitian_opmat` 再恢复 Hermitian 标记。
 
-### 第 5 步：对每个 μ 求谱
+### 第 5 步：在单个 μ 求谱
 
-`run_spectrum_scan` 对 `mus` 循环，调用：
+`run_spectrum` 调用：
 
 ```julia
-states = solve_spectrum(cache, mu)
+states = solve_spectrum(cache, couplings.mu)
 ```
 
 文件：`src/Spectrum.jl`
@@ -662,41 +665,39 @@ _eigensystem
 
 四个 sector 的结果合并、按能量排序，形成 `Vector{SpectrumState}`。
 
-### 第 6 步：统一量子数标签并保存结果
+### 第 6 步：合并物理能级、筛选并保存结果
 
 文件：`src/Storage.jl` 和 `src/Workflows.jl`
 
 ```text
-stable_id
-  → 根据 nm1/mu/Hamiltonian/k 生成稳定 job_id
-
-spectrum_dataframe
+level_catalog
   → 在容差内把 L²/C₂ 认成整数标签
-  → 同时保留 l2_raw/c2_raw 供数值诊断
-  → SpectrumState 转成长表 DataFrame
+  → 合并不同 (Z,R) sector 中同量子数、同能量的副本
+  → 不合并能量不同的能级
+
+spectrum_level_table
+  → 对配置的每个 (L²,C₂) 组合取最低若干能级，每个组合成为一列
+  → 计算 rescaled_energy=(E-E0)/factor
+  → 默认列序为 (0,0),(2,0),(6,0),(0,3),(2,3),(6,3)
 
 atomic_csv
-  → 每个 μ 写 spectra/<job_id>.csv
-
-append_csv
-  → 完成后向 summary.csv 追加一行
+  → 写 spectrum.csv
 ```
 
-基础 `spectrum` 不再自动套用尚未确认的 CFT tower 标准。需要研究某套 tower
-关系时，再显式调用相应的 CFT 分析。
+`spectrum` 不套用 CFT tower 标准，也不输出任何算符身份。本征向量只在内存中
+用于识别量子数，不写 JLD2。若某个组合不足配置数量，程序会提示增大
+`[spectrum].k`。
 
-如果中断后重跑，`completed_job_ids` 从 summary.csv 找到已成功 job，直接跳过。
+如果 `spectrum.csv` 已完整存在，重跑会直接复用；显式加入 `--force` 才覆盖。
 
 ### spectrum 最终输出
 
 ```text
 output/spectrum/<可选案例名_01>/
+├── case_identity.toml
+├── resolved_config.toml
 ├── run_metadata.toml
-├── summary.csv
-└── spectra/
-    ├── <job_id-1>.csv
-    ├── <job_id-2>.csv
-    └── ...
+└── spectrum.csv
 ```
 
 ---
@@ -713,28 +714,28 @@ bin/mottjain.jl
   → CLI.main
   → load_config
   → _plan
-  → _range 统计 spectrum μ 点数
+  → 展示 spectrum 单点 μ、筛选量子数、数量和 k
   → 统计 nm_values × scan_values
   → 打印计划
   → 不调用 build_model，不产生输出
 ```
 
-### B. `spectrum`：固定参数扫描 μ 的完整低能谱
+### B. `spectrum`：单个 μ 的筛选 rescaled 物理能级
 
 ```text
 CLI.main
-  → load_config / _couplings / _solver / _range
-  → Workflows.run_spectrum_scan
+  → load_config / _couplings / _solver
+  → 从 [spectrum] 读取 k、L²/C₂ 列表、每组数量和 factor
+  → Workflows.run_spectrum
   → Model.build_model
   → Spectrum.prepare_spectrum
-  → 对每个 μ：
-       Spectrum.solve_spectrum
-         → _eigensystem
-         → _resolve_quantum_numbers!
-       spectrum_dataframe
-         → 统一整数 L²/C₂ 标签并保留 raw 值
-       Storage.atomic_csv / append_csv
-  → summary.csv + 每个 μ 的 spectrum CSV
+  → Spectrum.solve_spectrum(hamiltonian.mu)
+      → _eigensystem
+      → _resolve_quantum_numbers!
+  → level_catalog 合并严格同能的离散-sector副本
+  → spectrum_level_table 筛选并 rescale
+  → Storage.atomic_csv
+  → spectrum.csv
 ```
 
 ### C. `gap`：不同尺寸的 scalar gap 与 J gap–μ
@@ -1032,7 +1033,6 @@ CLI.main
 | `_resolve_quantum_numbers!` | 简并子空间重新对角化 L2/C2 |
 | `solve_spectrum` | 合并四 sector 的低能态 |
 | `level_catalog` | 量子数分类并合并等能对称副本 |
-| `spectrum_dataframe` | 转为 CSV 表格 |
 
 ### `CFT.jl`
 
@@ -1059,7 +1059,7 @@ CLI.main
 
 | 函数 | 对应命令 |
 |---|---|
-| `run_spectrum_scan` | `spectrum` |
+| `run_spectrum` | `spectrum` |
 | `run_gap_scan` | `gap` |
 | `run_density_scan` | `density` |
 | `run_critical_search` | `critical` |

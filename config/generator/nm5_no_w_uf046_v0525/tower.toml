@@ -1,0 +1,244 @@
+# 当前 no-W 最佳候选的 tower 选态与 overlap 定义。
+# 低阶态固定为 S=2、dS=1、J=1、curlJ=2、dJ=1、T=1。
+
+[output]
+save_generated_vectors = false
+
+[states.G]
+name = "G"
+family = "standard"
+l2 = 0
+c2 = 0
+rank = 1
+member = 1
+
+[states.S]
+name = "S"
+family = "standard"
+l2 = 0
+c2 = 0
+rank = 2
+member = 1
+
+[states.boxS]
+name = "□S"
+family = "standard"
+l2 = 0
+c2 = 0
+rank = 3
+member = 1
+
+[states.dS]
+name = "∂S"
+family = "standard"
+l2 = 2
+c2 = 0
+rank = 1
+member = 1
+
+[states.boxdS]
+name = "□∂S"
+family = "standard"
+l2 = 2
+c2 = 0
+rank = 2
+# or 3
+member = 1
+
+[states.T]
+name = "T"
+family = "standard"
+l2 = 6
+c2 = 0
+rank = 1
+member = 1
+
+[states.ddS]
+name = "∂∂S(*)"
+family = "standard"
+l2 = 6
+c2 = 0
+rank = 2
+member = 1
+
+[states.O]
+name = "O"
+family = "standard"
+l2 = 0
+c2 = 3
+rank = 1
+member = 1
+
+[states.J]
+name = "J"
+family = "standard"
+l2 = 2
+c2 = 3
+rank = 1
+member = 1
+
+[states.curlJ]
+name = "ϵ∂J"
+family = "standard"
+l2 = 2
+c2 = 3
+rank = 2
+member = 1
+
+[states.boxJ]
+name = "□J"
+family = "standard"
+l2 = 2
+c2 = 3
+rank = 3
+# rank=3 有两个 SU(3) 多重态成员；member=2 与 J(member=1)
+# 同在 (z,r)=(-1,-1)，因此可以组成同一个目标子空间。
+member = 2
+
+[states.dJ]
+name = "∂J"
+family = "standard"
+l2 = 6
+c2 = 3
+rank = 1
+member = 1
+
+[states.epsddJ]
+name = "ϵ∂∂J"
+family = "standard"
+l2 = 6
+c2 = 3
+rank = 3
+member = 1
+
+# adjoint family 用于 L- -> Lambda_z -> L+ 的同角动量检验。
+[states.J_other]
+name = "J"
+family = "adjoint"
+l2 = 2
+c2 = 3
+rank = 1
+member = 1
+
+[states.curlJ_other]
+name = "ϵ∂J"
+family = "adjoint"
+l2 = 2
+c2 = 3
+rank = 2
+member = 1
+
+[states.boxJ_other]
+name = "□J"
+family = "adjoint"
+l2 = 2
+c2 = 3
+rank = 3
+member = 1
+
+[states.dJ_other]
+name = "∂J"
+family = "adjoint"
+l2 = 6
+c2 = 3
+rank = 1
+member = 1
+
+[states.epsddJ_other]
+name = "ϵ∂∂J"
+family = "adjoint"
+l2 = 6
+c2 = 3
+rank = 3
+member = 1
+
+[[overlaps]]
+name = "S_to_dS"
+input = "S"
+targets = ["dS"]
+target_l = 1
+mode = "regular"
+required = true
+
+[[overlaps]]
+name = "dS_to_scalar_L0"
+input = "dS"
+targets = ["S", "boxS"]
+target_l = 0
+mode = "regular"
+required = true
+
+[[overlaps]]
+name = "dS_to_scalar_L2_subspace"
+input = "dS"
+targets = ["T", "ddS"]
+target_l = 2
+mode = "regular"
+required = true
+
+[[overlaps]]
+name = "boxS_to_scalar_L1"
+input = "boxS"
+targets = ["dS", "boxdS"]
+target_l = 1
+mode = "regular"
+required = false
+
+[[overlaps]]
+name = "ddS_to_scalar_L1"
+input = "ddS"
+targets = ["dS", "boxdS"]
+target_l = 1
+mode = "regular"
+required = false
+
+[[overlaps]]
+name = "J_to_dJ"
+input = "J"
+targets = ["dJ"]
+target_l = 2
+mode = "regular"
+required = false
+
+[[overlaps]]
+name = "dJ_to_J_boxJ"
+input = "dJ"
+targets = ["J", "boxJ"]
+target_l = 1
+mode = "regular"
+required = false
+
+[[overlaps]]
+name = "curlJ_to_epsddJ"
+input = "curlJ"
+targets = ["epsddJ"]
+target_l = 2
+mode = "regular"
+required = false
+
+[[overlaps]]
+name = "J_to_curlJ_same_angular"
+input = "J_other"
+targets = ["curlJ_other"]
+target_l = 1
+mode = "same_angular"
+ladder = "minus"
+required = false
+
+[[overlaps]]
+name = "dJ_to_epsddJ_same_angular"
+input = "dJ_other"
+targets = ["epsddJ_other"]
+target_l = 2
+mode = "same_angular"
+ladder = "minus"
+required = false
+
+[[overlaps]]
+name = "curlJ_to_J_boxJ_same_angular"
+input = "curlJ_other"
+targets = ["J_other", "boxJ_other"]
+target_l = 1
+mode = "same_angular"
+ladder = "minus"
+required = false

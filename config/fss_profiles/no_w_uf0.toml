@@ -1,0 +1,8 @@
+# 当前 no-W 候选：只改变 Uf0，其余 Hamiltonian 参数取 config/my_run.toml。
+# 五个点覆盖当前 Uf0=1.834 附近更宽的约 -35% 到 +42% 范围。
+[fss]
+scan_parameter = "Uf0"
+scan_values = [1.2, 1.5, 1.834, 2.2, 2.6]
+
+[output]
+run_name = "no_w_uf0"

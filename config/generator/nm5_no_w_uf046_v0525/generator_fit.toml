@@ -1,0 +1,23 @@
+# 当前 no-W 最佳候选的 microscopic conformal-generator 拟合定义。
+# 只用固定的 S -> dS 关系训练并保存 Lambda。
+
+[fit]
+source = "S"
+target = "dS"
+svd_rtol = 1.0e-10
+
+[states.S]
+name = "S"
+family = "standard"
+l2 = 0
+c2 = 0
+rank = 2
+member = 1
+
+[states.dS]
+name = "dS"
+family = "standard"
+l2 = 2
+c2 = 0
+rank = 1
+member = 1

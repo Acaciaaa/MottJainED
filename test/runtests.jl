@@ -43,13 +43,6 @@ end
     )
     @test selected == [boundary]
 
-    table = MottJainED.spectrum_dataframe(
-        [boundary, rejected]; mu=0.1, nm1=6, quantum_tol=2e-3,
-    )
-    @test table.l2[1] == 20
-    @test table.c2[1] == 3
-    @test ismissing(table.l2[2])
-    @test table.l2_raw[1] == boundary.l2
 end
 
 @testset "Legacy raw-rank selection" begin
@@ -120,6 +113,42 @@ end
     @test score.delta_o ≈ 1.6
 end
 
+@testset "Filtered rescaled spectrum" begin
+    states = SpectrumState[
+        state(0.0, 0, 0),
+        state(0.6, 2, 0),
+        state(0.8, 6, 0),
+        state(0.9, 0, 3),
+        state(1.0, 2, 3; z=1),
+        state(1.0 + 1e-10, 2, 3; z=-1), # 同一物理能级的离散 sector 副本
+        state(1.5, 2, 3),               # 不同能量必须保留为另一行
+        state(2.0, 2, 3),
+        state(1.2, 6, 3),
+        state(0.9, 12, 8),              # 未请求的量子数必须排除
+    ]
+    result = spectrum_level_table(
+        states; l2_values=[0, 2, 6], c2_values=[0, 3],
+        levels_per_block=1, factor=0.5,
+    )
+    table = result.data
+    @test names(table) == [
+        "L2=0 C2=0", "L2=2 C2=0", "L2=6 C2=0",
+        "L2=0 C2=3", "L2=2 C2=3", "L2=6 C2=3",
+    ]
+    @test nrow(table) == 1
+    @test collect(table[1, :]) ≈ [0.0, 1.2, 1.6, 1.8, 2.0, 2.4]
+    @test length(result.catalog[(2, 3)]) == 3
+    @test result.catalog[(2, 3)][1].multiplicity == 2
+
+    pair = spectrum_level_table(
+        states; l2_values=[2], c2_values=[3], levels_per_block=2, factor=0.5,
+    ).data
+    @test pair[!, "L2=2 C2=3"] ≈ [2.0, 3.0]
+    @test_throws ArgumentError spectrum_level_table(
+        states; l2_values=[0], c2_values=[0], levels_per_block=2, factor=0.5,
+    )
+end
+
 @testset "Selectable legacy CFT scores" begin
     states = SpectrumState[
         state(0.0, 0, 0), state(1.2, 0, 0), state(3.2, 0, 0),
@@ -162,6 +191,12 @@ end
 @testset "Configuration" begin
     config = load_config(joinpath(dirname(@__DIR__), "config", "default.toml"))
     @test config["model"]["nm1"] == 5
+    @test config["spectrum"]["k"] == 200
+    @test config["spectrum"]["l2_values"] == [0, 2, 6]
+    @test config["spectrum"]["c2_values"] == [0, 3]
+    @test config["spectrum"]["levels_per_block"] == 7
+    @test config["spectrum"]["factor"] == 1.0
+    @test !haskey(config["spectrum"], "mu_min")
     @test config["density"]["k"] == 3
     @test config["critical"]["k"] == 10
     @test config["critical"]["mu_count"] == 9
@@ -209,6 +244,26 @@ end
     @test fss5_case["fss"]["score_metric"] == "cost"
     @test fss5_case["fss"]["k"] == 15
     @test fss5_case["output"]["run_name"] == "fss5"
+    current_config_path = joinpath(dirname(@__DIR__), "config", "my_run.toml")
+    current_config = load_config(current_config_path)
+    @test current_config["model"]["nm_values"] == [3, 4, 5, 6]
+    current_uf0_fss = load_config(
+        current_config_path;
+        override=joinpath(dirname(@__DIR__), "config", "fss_profiles", "no_w_uf0.toml"),
+    )
+    current_vf0_fss = load_config(
+        current_config_path;
+        override=joinpath(dirname(@__DIR__), "config", "fss_profiles", "no_w_vf0.toml"),
+    )
+    @test current_uf0_fss["fss"]["scan_parameter"] == "Uf0"
+    @test current_uf0_fss["fss"]["scan_values"] == [1.2, 1.5, 1.834, 2.2, 2.6]
+    @test current_uf0_fss["output"]["run_name"] == "no_w_uf0"
+    @test current_vf0_fss["fss"]["scan_parameter"] == "Vf0"
+    @test current_vf0_fss["fss"]["scan_values"] == [0.0, 0.2, 0.41, 0.7, 1.0]
+    @test current_vf0_fss["output"]["run_name"] == "no_w_vf0"
+    @test current_uf0_fss["fss"]["methods"] == ["optimize"]
+    @test current_uf0_fss["fss"]["mu_min"] == -0.095
+    @test current_uf0_fss["fss"]["mu_max"] == 0.305
     mktemp() do _, plan_io
         redirect_stdout(plan_io) do
             MottJainED._plan(fss5_case)
@@ -218,6 +273,8 @@ end
         plan_text = read(plan_io, String)
         @test occursin("FSS 每 sector 的 k", plan_text)
         @test occursin("= 15", plan_text)
+        @test occursin("FSS 外层参数", plan_text)
+        @test occursin("FSS 参数点", plan_text)
     end
     mktempdir() do directory
         first_case = MottJainED._ordinary_task_output(

@@ -104,7 +104,7 @@ julia --startup-file=no --threads=auto --project=. bin/mottjain.jl COMMAND --con
 | 功能 | `COMMAND` | 主要读取的配置 | 主要结果 |
 |---|---|---|---|
 | 只检查任务 | `plan` | 全部配置的任务规模 | 只打印预览，不计算、不写数值结果 |
-| 低能谱随 μ | `spectrum` | `[model] [hamiltonian] [solver] [spectrum]` | `spectrum/summary.csv`、`spectra/*.csv` |
+| 单点筛选低能谱 | `spectrum` | `[model] [hamiltonian].mu [solver] [spectrum]` | `spectrum.csv` |
 | scalar/J gap | `gap` | `[model].nm_values [hamiltonian] [gap]` | `gap_results.csv`、两张 gap 图 |
 | particle density | `density` | `[model].nm1 [hamiltonian] [density]` | `density.csv`、`density.png` |
 | 固定 μ 网格找临界点 | `critical` | `[critical]` | `critical_scan.csv`、`critical_point.csv` |
@@ -136,20 +136,18 @@ julia --threads=auto --project=. bin/mottjain.jl COMMAND \
 | `--config=FILE` | 本次读取的完整任务配置 | 所有数值功能 |
 | `--override=FILE` | 在完整配置上叠加一个小 TOML | 给 `critical/fss/optimize` 切换案例 profile |
 | `--nm1=N` | 临时替换 `[model].nm1` | `plan/optimize/spectrum/density/critical/scaling/oes/rses` |
-| `--k=N` | 临时替换当前功能自己的 k | `plan/optimize/gap/density/critical/fss/generator/tower` |
+| `--k=N` | 临时替换当前功能自己的 k | `plan/spectrum/optimize/gap/density/critical/fss/generator/tower` |
 | `--run-name=NAME` | 在当前功能目录下建立 `NAME_01/NAME_02` | 普通功能需要区分多组输入时 |
 | `--output=DIR` | 临时替换 `[output].root` | 本地与服务器输出根目录不同时 |
 | `--force` | 覆盖已有 checkpoint 或固定结果 | `spectrum/gap/density/fss/generator/tower`，慎用 |
 
-`spectrum/scaling/oes/rses` 使用通用 `[solver].k`；这四个功能若要改 k，请直接改
-TOML 的 `[solver]`，不要在命令末尾加 `--k`。`gap/density/critical/fss/optimize`
-各自有独立 k，避免简单功能错误继承很大的 `[solver].k`。
+`spectrum` 使用自己的 `[spectrum].k`，也可临时传 `--k=N`。`scaling/oes/rses`
+使用通用 `[solver].k`；`gap/density/critical/fss/optimize` 也各有独立 k。
 
 只有少数功能有专用命令参数：
 
 | 功能 | 专用参数 | 意义 |
 |---|---|---|
-| `spectrum` | `--keep-vectors` | 除 CSV 外，再为每个 μ 保存 State 向量 JLD2 |
 | `fss/fss-all` | `--method=grid\|optimize\|both` | 临时选择本次 μc 方法，不改 TOML |
 | `fss-plot/fss-fit` | `--method=...`、`--y=列名`、`--source=CSV` | 选择已有数据和要画/拟合的列 |
 | `generator-register` | `--point=ID`、`--from=CSV`、`--notes=文字` | 指定新候选 ID、optimization 结果和备注 |
@@ -180,13 +178,9 @@ julia --project=. bin/mottjain.jl plan \
 #### spectrum、gap、density、critical
 
 ```bash
-# 单个 nm1，在 [spectrum] 的 μ 列表上保存低能谱
+# 单个 nm1，在 [hamiltonian].mu 输出筛选并 rescale 后的物理能级
 julia --threads=auto --project=. bin/mottjain.jl spectrum \
   --config=config/my_run.toml
-
-# 若确实需要把每个 μ 的 State 向量也写入 spectra/*.jld2
-julia --threads=auto --project=. bin/mottjain.jl spectrum \
-  --config=config/my_run.toml --keep-vectors
 
 # 对 [model].nm_values 的每个尺寸同时画 scalar gap 和 J gap
 julia --threads=auto --project=. bin/mottjain.jl gap \
@@ -359,8 +353,13 @@ julia --project=. bin/mottjain.jl gap     --config=config/my_run.toml
 julia --project=. bin/mottjain.jl density --config=config/my_run.toml
 ```
 
-`spectrum` 为每个 μ 写一个独立 CSV，最后才登记到 `summary.csv`。中断后重跑
-会根据稳定 `job_id` 跳过已完成点；加入 `--force` 可覆盖重算。
+`spectrum` 只计算 `[hamiltonian].mu` 一个点。它把不同离散 `(Z,R)` sector
+中同 `(L²,C₂)`、同能量的副本合并，但不同能量始终保留为不同能级；然后对
+`[spectrum].l2_values × c2_values` 的每个组合保留最低
+`levels_per_block` 个。`spectrum.csv` 每个 `(L²,C₂)` 组合占一列，默认顺序是
+`(0,0),(2,0),(6,0),(0,3),(2,3),(6,3)`，每列 7 个 rescaled energy。
+不保存本征向量，也不附加算符身份。`[spectrum].factor` 必须明确给出，程序不会
+用暂定算符身份替你拟合它。已有结果默认复用；加 `--force` 才重算。
 
 `gap` 在每个 `(nm1,μ)` 只求一次谱，同时计算原始 `(L²,C₂)=(0,0)`
 列表第二项对应的 scalar gap，以及最低 `(2,3)` 态对应的 J gap。输出为
@@ -606,6 +605,10 @@ julia --project=. bin/mottjain.jl fss-plot \
 若要改扫 `Vf0`，把 `scan_parameter` 改成 `"Vf0"` 并相应修改
 `scan_values`；其余 Hamiltonian 系数取 `[hamiltonian]` 中的固定值。建议复制一份
 FSS profile 并修改其中的 `run_name`，不要与 Uf0 扫描混写。
+
+当前 no-W 候选已经提供两份这样的独立 profile：
+`config/fss_profiles/no_w_uf0.toml` 和 `no_w_vf0.toml`。它们分别复现旧
+`FSS1.jl` 先扫 Uf0、再扫 Vf0 的结构；这是两组一维扫描，不是 Uf0×Vf0 二维网格。
 
 `fss-all` 会在数据计算后，分别对 grid/optimize 结果画图并尝试额外的联合拟合。
 这一拟合是新项目提供的可选后处理，并不是旧 `FSS1.jl` 找 μc 的步骤。拟合采用
@@ -915,7 +918,7 @@ FuzzifiED 开56线程。更多线程不一定更快，尤其在稀疏矩阵乘�
 
 | 功能 | 已完成部分是否复用 | 中断点的代价 |
 |---|---|---|
-| `spectrum` | 按每个 μ 跳过 | 正在计算的那个 μ 重算 |
+| `spectrum` | 完整 `spectrum.csv` 复用 | 单点 ED 整体重算 |
 | `gap` | 按每个 `(nm1, μ)` 跳过 | 正在计算的组合重算 |
 | `density` | 按每个 μ 跳过 | 正在计算的那个 μ 重算 |
 | `fss`/`fss-all` | 按 `(method,nm1,scan_value)` 跳过 | 当前外层点内部的整段 grid 或 Brent 重算 |

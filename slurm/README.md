@@ -22,7 +22,7 @@ sbatch slurm/generator.sbatch
 | gap | `gap.sbatch` |
 | density | `density.sbatch` |
 | critical | `critical.sbatch` |
-| FSS 数据、图和拟合 | `fss.sbatch` |
+| FSS 数据、图和拟合 | `fss.sbatch`（数组任务分别扫描 Uf0/Vf0） |
 | Hamiltonian 参数优化 | `optimize.sbatch` |
 | scaling dimension 图 | `scaling.sbatch` |
 | generator ED 与 Lambda 拟合 | `generator.sbatch` |
