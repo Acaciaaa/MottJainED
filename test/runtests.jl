@@ -188,6 +188,94 @@ end
     @test only_j.terms == [:j]
 end
 
+@testset "FSS anchor and size-continuation search" begin
+    evaluations = NamedTuple[]
+    function multiwell(mu)
+        left = (mu - 0.25)^2 + 0.08
+        narrow_global = 25.0 * (mu - 0.77)^2 + 0.01
+        return (valid=true, objective=min(left, narrow_global))
+    end
+    result = MottJainED._global_grid_refine(
+        multiwell; mu_min=0.0, mu_max=1.0, mu_count=21,
+        abs_tol=1.0e-7, max_iterations=100,
+        on_evaluation=(mu, score, source) -> push!(
+            evaluations, (mu=mu, objective=score.objective, source=source),
+        ),
+    )
+    @test result.mu ≈ 0.77 atol=5e-5
+    @test result.score.objective ≈ 0.01 atol=1e-8
+    @test result.candidate_count == 2
+    @test result.refined_count == 2
+    @test result.refinements_converged == 2
+    @test result.grid_best_mu == 0.75
+    @test result.grid_best_objective >= result.score.objective
+    @test startswith(result.best_source, "anchor_refine_")
+    @test result.evaluations == length(evaluations)
+    @test count(row -> row.source == "anchor_grid", evaluations) == 21
+
+    # 大尺寸从前一 size 的结果附近续接；远处 Brent 只是候选，不能覆盖更低的局部支路。
+    continuation = MottJainED._continuation_grid_refine(
+        multiwell; center=0.76, mu_min=0.0, mu_max=1.0,
+        local_half_width=0.04, local_count=9, max_expansions=2,
+        abs_tol=1.0e-7, max_iterations=100,
+    )
+    @test continuation.mu ≈ 0.77 atol=5e-5
+    @test continuation.search_mode == "continuation"
+    @test continuation.center_mu == 0.76
+    @test continuation.wide_brent_converged
+    @test continuation.score.objective <= continuation.wide_brent_objective
+
+    # 回归 N=6 型故障：宽 Brent 只看见 0.142 的宽谷，前一 size 的 seed 能抓住
+    # 0.096 附近更低但很窄的谷；最后必须保留后者。
+    function hidden_narrow_valley(mu)
+        if abs(mu-0.096) < 0.006
+            return (valid=true, objective=0.29 + 80.0*(mu-0.096)^2)
+        end
+        return (valid=true, objective=0.57 + (mu-0.142)^2)
+    end
+    guarded = MottJainED._continuation_grid_refine(
+        hidden_narrow_valley; center=0.09584,
+        mu_min=-0.095, mu_max=0.305,
+        local_half_width=0.02, local_count=9, max_expansions=3,
+        abs_tol=1.0e-7, max_iterations=100,
+    )
+    @test guarded.mu ≈ 0.096 atol=5e-5
+    @test guarded.wide_brent_mu ≈ 0.142 atol=5e-5
+    @test guarded.score.objective < guarded.wide_brent_objective
+    @test startswith(guarded.best_source, "local_")
+
+    # 前一 size 的 seed 偏了一点时，窗口最低落在边界会触发扩大，而不是直接接受边界。
+    expanded = MottJainED._continuation_grid_refine(
+        mu -> (valid=true, objective=(mu-0.56)^2);
+        center=0.50, mu_min=0.0, mu_max=1.0,
+        local_half_width=0.02, local_count=5, max_expansions=3,
+        abs_tol=1.0e-7, max_iterations=100,
+    )
+    @test expanded.mu ≈ 0.56 atol=5e-5
+    @test expanded.expansions >= 2
+    @test expanded.search_lower <= 0.56 <= expanded.search_upper
+
+    # 无效区间不能胜出；若最低点确实在总边界，则保留边界而不强行做 Brent。
+    endpoint = MottJainED._global_grid_refine(
+        mu -> (valid=mu >= 0.2, objective=1.0-mu);
+        mu_min=0.0, mu_max=1.0, mu_count=6,
+    )
+    @test endpoint.mu == 1.0
+    @test endpoint.at_boundary
+    @test endpoint.invalid == 1
+    @test endpoint.refined_count == 0
+
+    @test MottJainED._grid_local_minimum_indices([
+        (valid=true, objective=2.0),
+        (valid=true, objective=1.0),
+        (valid=true, objective=1.0),
+        (valid=true, objective=2.0),
+    ]) == [2]
+    @test_throws ArgumentError MottJainED._global_grid_refine(
+        multiwell; mu_min=0.0, mu_max=1.0, mu_count=2,
+    )
+end
+
 @testset "Configuration" begin
     config = load_config(joinpath(dirname(@__DIR__), "config", "default.toml"))
     @test config["model"]["nm1"] == 5
@@ -202,6 +290,7 @@ end
     @test config["critical"]["mu_count"] == 9
     @test !haskey(config["critical"], "coarse_points")
     @test config["fss"]["mu_count"] == 9
+    @test config["fss"]["optimize_strategy"] == "size_continuation"
     @test !haskey(config["critical"], "score_terms")
     @test !haskey(config["fss"], "score_terms")
     @test config["fss"]["methods"] == ["grid", "optimize"]
@@ -262,6 +351,9 @@ end
     @test current_vf0_fss["fss"]["scan_values"] == [0.0, 0.2, 0.41, 0.7, 1.0]
     @test current_vf0_fss["output"]["run_name"] == "no_w_vf0"
     @test current_uf0_fss["fss"]["methods"] == ["optimize"]
+    @test current_uf0_fss["fss"]["optimize_strategy"] == "size_continuation"
+    @test current_uf0_fss["fss"]["optimize_anchor_nm"] == 4
+    @test current_uf0_fss["fss"]["optimize_local_count"] == 9
     @test current_uf0_fss["fss"]["mu_min"] == -0.095
     @test current_uf0_fss["fss"]["mu_max"] == 0.305
     mktemp() do _, plan_io
@@ -275,6 +367,8 @@ end
         @test occursin("= 15", plan_text)
         @test occursin("FSS 外层参数", plan_text)
         @test occursin("FSS 参数点", plan_text)
+        @test occursin("FSS optimize 搜索策略", plan_text)
+        @test occursin("发现网格 ED", plan_text)
     end
     mktempdir() do directory
         first_case = MottJainED._ordinary_task_output(

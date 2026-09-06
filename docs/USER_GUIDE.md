@@ -252,7 +252,7 @@ julia --threads=auto --project=. bin/mottjain.jl fss \
   --config=config/my_run.toml --override=config/fss_profiles/fss7.toml \
   --method=grid
 
-# 只用旧 FSS 的 Brent 找每个外层点的 muc
+# 固定每个外层参数值，沿 size 追踪 muc
 julia --threads=auto --project=. bin/mottjain.jl fss \
   --config=config/my_run.toml --override=config/fss_profiles/fss7.toml \
   --method=optimize
@@ -487,8 +487,9 @@ free = ["Uf", "Uf0", "Vf", "Vf0", "V0", "mu"]
 这些方案在 `tie_u0_to_uf=true` 时都会自动令 `U0=9Uf`。
 
 `algorithm="auto"` 时，一个自由参数使用有界 Brent，两个及以上使用旧
-`optimization.jl` 的 Nelder–Mead 和越界 penalty。因此 `free=["mu"]` 与 FSS
-内层寻找 μc 使用同一种 Brent 算法；FSS 仍使用专门的 `H0+μNf` 缓存入口，避免
+`optimization.jl` 的 Nelder–Mead 和越界 penalty。这是独立 `optimize` 命令的
+逻辑，没有改变。FSS 内层寻找 μc 则固定每个外层参数值，沿 size 续接上一尺寸的
+μc，并用扩窗和宽区间 Brent 候选检查；它仍走专门的 `H0+μNf` 缓存入口，避免
 为每个外层点建立不必要的多参数矩阵。
 
 每次 evaluation 都会立即追加到 `evaluations.csv`，同时记录自由参数列表、算法、
@@ -550,6 +551,11 @@ scan_values = [1.5, 2.0, 2.5, 3.0, 3.5, 4.0]
 mu_min = 0.0
 mu_max = 0.12
 mu_count = 9
+optimize_strategy = "size_continuation"
+optimize_anchor_nm = 4
+optimize_local_half_width = 0.02
+optimize_local_count = 9
+optimize_max_expansions = 3
 optimize_abs_tol = 1.0e-4
 optimize_max_iterations = 60
 ```
@@ -582,18 +588,29 @@ julia --threads=auto --project=. bin/mottjain.jl fss \
 julia --threads=auto --project=. bin/mottjain.jl fss \
   --config=config/my_run.toml --override=config/fss_profiles/fss7.toml --method=grid
 
-# 本次命令只用旧 FSS1.jl 的 Brent 连续寻找 μc
+# 本次命令固定外层参数，并沿 size 追踪 μc
 julia --threads=auto --project=. bin/mottjain.jl fss \
   --config=config/my_run.toml --override=config/fss_profiles/fss7.toml --method=optimize
 ```
 
-两种方法具有相同的外层循环：逐个固定 `(nm1, scan_value)`。区别只在内层 μ：
+两种方法都生成每个 `(nm1, scan_value)` 的结果。区别在 optimize 会把同一个
+`scan_value` 在不同 size 上连成一条独立的 μc 轨迹：
 
 - `grid`：准确计算 `mu_count` 个 μ，取 score 最小的网格点；
-- `optimize`：在 `mu_min` 到 `mu_max` 内调用旧 `FSS1.jl` 的 Brent 搜索 μc。
+- `optimize`：`N < optimize_anchor_nm` 独立宽搜但不作为后续 seed；
+  `N = optimize_anchor_nm` 宽搜并建立 anchor；更大的 N 围绕前一 size 的 μc 做
+  局部细网格和逐谷底 Brent。局部网格最低在窗口边界时自动扩大窗口，同时另跑
+  一次全范围 Brent 作为候选；最终比较所有实际算过的有效点，选择最低 score。
+
+程序内部仍按 size 在外层执行，以便同一 size 的不同 `scan_value` 复用昂贵的
+Basis/Hamiltonian 缓存；但上一 size 的 μc 按 `scan_value` 分开保存，不会拿
+`Uf0=1.5` 的结果给 `Uf0=2.2` 当 seed。
 
 结果不会混在一起，分别保存为 `fss_grid_results.csv` 和
-`fss_optimize_results.csv`。因此两种结果可以直接比较，也可以分别画图：
+`fss_optimize_results.csv`。`optimize` 的每次 μ 求值还会立即写入
+`fss_optimize_evaluations.csv`，可以直接检查完整的 `q(μ)` 轨迹。因此两种结果
+可以直接比较，也可以分别画图。结果行会记录 `search_mode`、上一尺寸给出的
+`center_muc`、实际局部窗口、扩窗次数、宽 Brent 候选以及最后的 `best_source`：
 
 ```bash
 julia --project=. bin/mottjain.jl fss-plot \
@@ -921,7 +938,7 @@ FuzzifiED 开56线程。更多线程不一定更快，尤其在稀疏矩阵乘�
 | `spectrum` | 完整 `spectrum.csv` 复用 | 单点 ED 整体重算 |
 | `gap` | 按每个 `(nm1, μ)` 跳过 | 正在计算的组合重算 |
 | `density` | 按每个 μ 跳过 | 正在计算的那个 μ 重算 |
-| `fss`/`fss-all` | 按 `(method,nm1,scan_value)` 跳过 | 当前外层点内部的整段 grid 或 Brent 重算 |
+| `fss`/`fss-all` | 按 `(method,nm1,scan_value)` 跳过，并恢复已完成 size 的 muc 供后续续接 | 当前 size 的局部搜索重算 |
 | `optimize` | 保留每次 evaluation，并从历史最佳点重新启动 | 不保存 Nelder–Mead simplex/Brent 内部状态，可能重复一些点 |
 | `generator` | 完整 `ed_snapshot.jld2` 和 Lambda 会复用 | 若在 ED 快照写完前中断，该 point 的 ED 整体重算 |
 | `tower` | 完整且配置签名相同的结果直接复用 | 未完成的 tower 本次整体重算，但不重做 ED/Lambda |

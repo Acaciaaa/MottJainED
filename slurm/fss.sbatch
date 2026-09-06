@@ -11,7 +11,7 @@
 # ===== 用户配置区 =====
 config="config/my_run.toml"
 profiles=("config/fss_profiles/no_w_uf0.toml" "config/fss_profiles/no_w_vf0.toml")
-method="optimize"  # 改成 grid 时，每个外层点会硬算 my_run.toml 中的 41 个 mu
+method="optimize"  # 固定外层参数，N=4 建 anchor，N=5/6 沿 size 续接 muc
 threads=16         # 56 CPU 取得内存，但 FuzzifiED 先只开 16 线程
 # =====================
 

@@ -849,18 +849,24 @@ CLI.main
              → 只计算 mu_count 个网格点 → cft_score
              → 选网格中 objective 最小点
          method=optimize：
-           optimize_mu_with_score
-             → 旧 FSS1.jl 的 Brent 在范围内连续寻找 μc
+           optimize_fss_mu_with_score
+             → N=3 独立宽搜，不约束后续 size
+             → N=4 宽搜，作为固定 scan_value 的 anchor
+             → N=5/6 围绕前一 size 的 muc 做局部细网格
+             → 窗口边界最低时自动扩窗
+             → 与全范围 Brent 候选比较实际 score
          两种方法分别 Storage.append_csv
   → fss_grid_results.csv
   → fss_optimize_results.csv
+  → fss_optimize_evaluations.csv（完整 q(μ) 求值轨迹）
 ```
 
 两种方法默认都运行。也可以在 TOML 写 `methods=["grid"]` /
 `methods=["optimize"]`，或在命令末尾临时加 `--method=grid`、
 `--method=optimize`。一行结果包含：`nm1`、`scan_value`、`muc`、`objective`、
 `q`、`cost`、`factor`、`delta_s`、`delta_o`、是否在 μ 边界和 Hamiltonian
-全部系数。
+全部系数；optimize 结果还记录 continuation 中心、实际窗口、扩窗次数、宽 Brent
+候选和最终最低点的来源。
 
 ### H. `fss-plot`：只读数据画图
 

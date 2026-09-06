@@ -162,6 +162,11 @@ Base.@kwdef struct FSSSettings
     score_definition::Symbol = :fss7
     score_terms::Vector{Symbol} = Symbol[]
     score_metric::Symbol = :cost
+    optimize_strategy::Symbol = :size_continuation
+    optimize_anchor_nm::Int = 4
+    optimize_local_half_width::Float64 = 0.02
+    optimize_local_count::Int = 9
+    optimize_max_expansions::Int = 3
     optimize_abs_tol::Float64 = 1.0e-4
     optimize_max_iterations::Int = 60
 end

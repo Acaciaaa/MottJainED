@@ -83,7 +83,7 @@ mu_max = 0.135
 mu_count = 31
 
 [fss]
-# 当前 no-W 候选的第一轮 FSS：像旧 FSS1.jl 一样，对每个外层参数点连续寻找 muc。
+# 当前 no-W 候选的 FSS：对每个外层参数点可靠地寻找 muc。
 # Uf0/Vf0 两种独立变化由 config/fss_profiles/no_w_*.toml 分开选择、分开输出。
 methods = ["optimize"]
 k = 30
@@ -93,11 +93,16 @@ score_metric = "q"
 # 不加 profile 时默认做 Uf0；profile 会覆盖下面两行。
 scan_parameter = "Uf0"
 scan_values = [1.2, 1.5, 1.834, 2.2, 2.6]
-# optimize 把这两项当作 Brent 边界；范围与已检查过的 gap 扫描一致。
-# 临时 --method=grid 时则以 0.01 的步长取 41 点。
+# 对每个固定 scan_value：N=3 独立宽搜、N=4 宽搜并作为 anchor；N=5/6 沿前一
+# size 的 muc 在 ±0.02 内细搜，碰到窗口边界自动扩窗，并与宽区间 Brent 候选比 q。
 mu_min = -0.095
 mu_max = 0.305
 mu_count = 41
+optimize_strategy = "size_continuation"
+optimize_anchor_nm = 4
+optimize_local_half_width = 0.02
+optimize_local_count = 9
+optimize_max_expansions = 3
 optimize_abs_tol = 1.0e-4
 optimize_max_iterations = 100
 

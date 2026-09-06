@@ -279,7 +279,7 @@ MottJainED — 可复现的 SU(3) fuzzy-sphere 计算流程
   density     扫描 charge-1/charge-3 基态密度
   critical    在给定 mu 网格上选所配置 score 的最小点
   optimize    按 free/values/bounds 优化任意 Hamiltonian 参数组合
-  fss         FSS grid/optimize 两种 μc 方法；--method=grid|optimize|both
+  fss         FSS 固定 grid / 沿 size 追踪 μc；--method=grid|optimize|both
   fss-plot    读取已有 FSS CSV 画图，不重新计算
   fss-fit     联合拟合共享的 Delta_inf 和 omega
   fss-all     依次计算 FSS、画 delta_s、尝试联合拟合
@@ -352,7 +352,18 @@ function _plan(config)
     println("  FSS mu 范围                = [$fss_mu_min, $fss_mu_max]")
     println("  FSS 方法                    = $fss_methods")
     :grid in fss_methods && println("  FSS grid 求谱点数         = $(length(_nm_values(config)) * length(scan_values) * fss_mu_count)")
-    :optimize in fss_methods && println("  FSS optimize 求谱次数     = 由 Brent 收敛过程决定")
+    if :optimize in fss_methods
+        println("  FSS optimize 搜索策略     = $(_get(fss, :optimize_strategy, "size_continuation"))")
+        anchor_nm = Int(_get(fss, :optimize_anchor_nm, 4))
+        anchor_sizes = count(nm -> nm <= anchor_nm, _nm_values(config))
+        continuation_sizes = length(_nm_values(config)) - anchor_sizes
+        anchor_count = anchor_sizes * length(scan_values) * fss_mu_count
+        local_count = continuation_sizes * length(scan_values) *
+                      Int(_get(fss, :optimize_local_count, 9))
+        println("  FSS anchor size            = N <= $anchor_nm")
+        println("  FSS anchor 发现网格 ED    = $anchor_count")
+        println("  FSS continuation 初始网格 = $local_count（另加精修、宽 Brent 和必要扩窗）")
+    end
     println("  通用每 sector 本征态数 k = $(_solver(config).k)")
     println("  critical 每 sector 的 k       = $(Int(_get(_section(config, :critical), :k, 10)))")
     println("  FSS 每 sector 的 k        = $(Int(_get(fss, :k, 15)))")
@@ -572,6 +583,13 @@ function main(args=ARGS)
             mu_count=Int(_get(section, :mu_count, 9)),
             methods=methods, score_definition=definition, score_terms=terms,
             score_metric=metric,
+            optimize_strategy=Symbol(lowercase(replace(
+                String(_get(section, :optimize_strategy, "size_continuation")), '-' => '_',
+            ))),
+            optimize_anchor_nm=Int(_get(section, :optimize_anchor_nm, 4)),
+            optimize_local_half_width=Float64(_get(section, :optimize_local_half_width, 0.02)),
+            optimize_local_count=Int(_get(section, :optimize_local_count, 9)),
+            optimize_max_expansions=Int(_get(section, :optimize_max_expansions, 3)),
             optimize_abs_tol=Float64(_get(section, :optimize_abs_tol, 1e-4)),
             optimize_max_iterations=Int(_get(section, :optimize_max_iterations, 60)),
         )

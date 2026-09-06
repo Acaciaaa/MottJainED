@@ -76,7 +76,7 @@ mu_max = 0.12
 mu_count = 9
 
 [fss]
-# 默认同时做固定 mu 网格和旧 FSS1 Brent 优化。
+# 默认同时做固定 mu 网格和“固定外层参数、沿 size 追踪 muc”的优化。
 # 若只要一种，可写 methods = ["grid"] 或 methods = ["optimize"]。
 methods = ["grid", "optimize"]
 k = 15
@@ -85,7 +85,13 @@ scan_parameter = "Uf0"
 scan_values = [1.5, 2.0, 2.5, 3.0, 3.5, 4.0]
 mu_min = 0.0
 mu_max = 0.12
+# anchor size 使用这个宽范围发现网格；更大 size 改用下面的局部细网格。
 mu_count = 9
+optimize_strategy = "size_continuation"
+optimize_anchor_nm = 4
+optimize_local_half_width = 0.02
+optimize_local_count = 9
+optimize_max_expansions = 3
 optimize_abs_tol = 1.0e-4
 optimize_max_iterations = 60
 

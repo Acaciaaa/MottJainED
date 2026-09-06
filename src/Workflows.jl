@@ -400,11 +400,7 @@ function _couplings_from_values(family::_LinearFamily, values)
     return couplings
 end
 
-"""
-连续优化单个 μ：保留旧 FSS1.jl 的有界 Brent 逻辑。
-
-FSS 的 `optimize` 方法和单参数优化共用这个底层函数。
-"""
+"""旧式单区间有界 Brent 搜索；保留作底层对照，FSS 不再依赖其全局性。"""
 function optimize_mu_with_score(
     cache::ModelCache;
     mu_min::Real,
@@ -454,6 +450,340 @@ function optimize_mu_with_score(
         evaluations=length(evaluations),
         invalid=count(value -> !value.valid, values(evaluations)), result=result,
     )
+end
+
+_finite_objective(score) = score.valid && isfinite(score.objective)
+_mu_key(mu) = round(Float64(mu); digits=14)
+
+"""
+找出发现网格上的局部最小值，并把连续平台合并成一个候选谷底。
+
+无效点按 `Inf` 处理，因此每段有效区间的端点也可以成为候选。全局网格最小值
+始终在返回结果中，避免严格局部极小判据因数值平台而漏掉当前最佳点。
+"""
+function _grid_local_minimum_indices(scores)
+    objectives = [
+        _finite_objective(score) ? Float64(score.objective) : Inf for score in scores
+    ]
+    valid = findall(isfinite, objectives)
+    isempty(valid) && return Int[]
+    candidates = Int[]
+    for index in eachindex(objectives)
+        isfinite(objectives[index]) || continue
+        left = index == firstindex(objectives) ? Inf : objectives[index-1]
+        right = index == lastindex(objectives) ? Inf : objectives[index+1]
+        objectives[index] <= left && objectives[index] <= right && push!(candidates, index)
+    end
+
+    # 平坦谷底上的相邻点只需要精修一次；取平台中点使 bracket 尽量对称。
+    collapsed = Int[]
+    cursor = 1
+    while cursor <= length(candidates)
+        stop = cursor
+        while stop < length(candidates) && candidates[stop+1] == candidates[stop] + 1
+            stop += 1
+        end
+        group = candidates[cursor:stop]
+        minimum_value = minimum(objectives[group])
+        minima = [index for index in group if objectives[index] == minimum_value]
+        push!(collapsed, minima[cld(length(minima), 2)])
+        cursor = stop + 1
+    end
+
+    global_index = valid[argmin(objectives[valid])]
+    global_index in collapsed || push!(collapsed, global_index)
+    sort!(collapsed)
+    return collapsed
+end
+
+function _new_scalar_search(
+    score_at;
+    penalty::Real=1.0e3,
+    on_evaluation=(mu, score, source) -> nothing,
+)
+    evaluations = Dict{Float64,Any}()
+    sources = Dict{Float64,String}()
+    function evaluate(mu, source)
+        key = _mu_key(mu)
+        if !haskey(evaluations, key)
+            score = score_at(key)
+            evaluations[key] = score
+            sources[key] = String(source)
+            on_evaluation(key, score, String(source))
+        end
+        score = evaluations[key]
+        return _finite_objective(score) ? Float64(score.objective) : Float64(penalty)
+    end
+    return (evaluate=evaluate, evaluations=evaluations, sources=sources)
+end
+
+"""在一个区间内做发现网格，并分别精修该网格识别出的局部谷底。"""
+function _refine_grid_interval!(
+    search;
+    lower::Real,
+    upper::Real,
+    count::Int,
+    abs_tol::Real,
+    max_iterations::Int,
+    source_prefix::AbstractString,
+)
+    lower < upper || throw(ArgumentError("search lower bound must be below upper bound"))
+    count >= 3 || throw(ArgumentError("grid refinement needs at least three points"))
+    grid = collect(range(Float64(lower), Float64(upper); length=count))
+    grid_scores = Any[]
+    for (index, mu) in enumerate(grid)
+        @info "FSS mu discovery grid" source_prefix index total=count mu lower upper
+        search.evaluate(mu, "$(source_prefix)_grid")
+        push!(grid_scores, search.evaluations[_mu_key(mu)])
+    end
+    candidates = _grid_local_minimum_indices(grid_scores)
+    attempted = 0
+    converged = 0
+    for (candidate_number, index) in enumerate(candidates)
+        # 窗口边界没有双侧 bracket；调用者会据此决定是否扩大窗口。
+        (index == firstindex(grid) || index == lastindex(grid)) && continue
+        bracket_lower, bracket_upper = grid[index-1], grid[index+1]
+        source = "$(source_prefix)_refine_$(candidate_number)"
+        attempted += 1
+        @info "FSS refining discovered valley" source index bracket_lower bracket_upper grid_mu=grid[index]
+        try
+            result = optimize(
+                mu -> search.evaluate(mu, source), bracket_lower, bracket_upper, Brent();
+                abs_tol=Float64(abs_tol), rel_tol=1.0e-5,
+                iterations=max_iterations, show_trace=false,
+            )
+            search.evaluate(Optim.minimizer(result), source)
+            converged += Optim.converged(result)
+        catch err
+            @warn "FSS valley refinement failed; retaining evaluated points" source bracket_lower bracket_upper error=sanitize_error(err)
+        end
+    end
+    valid = findall(_finite_objective, grid_scores)
+    best_index = isempty(valid) ? nothing : valid[argmin([
+        Float64(grid_scores[index].objective) for index in valid
+    ])]
+    return (
+        grid=grid, scores=grid_scores, candidates=candidates,
+        candidate_count=length(candidates), refined_count=attempted,
+        refinements_converged=converged, grid_best_index=best_index,
+        grid_best_mu=best_index === nothing ? NaN : grid[best_index],
+        grid_best_objective=best_index === nothing ? Inf :
+                            Float64(grid_scores[best_index].objective),
+        grid_best_at_boundary=best_index === nothing ? false :
+                              best_index == firstindex(grid) || best_index == lastindex(grid),
+    )
+end
+
+function _scalar_search_summary(search; mu_min::Real, mu_max::Real, abs_tol::Real)
+    ordered_keys = sort!(collect(keys(search.evaluations)))
+    valid_keys = [key for key in ordered_keys if _finite_objective(search.evaluations[key])]
+    records = [
+        (mu=key, score=search.evaluations[key], source=search.sources[key])
+        for key in ordered_keys
+    ]
+    if isempty(valid_keys)
+        return (
+            mu=NaN, score=nothing, at_boundary=false,
+            evaluations=length(ordered_keys), invalid=length(ordered_keys),
+            best_source="none", evaluation_records=records,
+        )
+    end
+    best_key = valid_keys[argmin([
+        Float64(search.evaluations[key].objective) for key in valid_keys
+    ])]
+    tolerance = max(Float64(abs_tol), 1.0e-8)
+    return (
+        mu=best_key, score=search.evaluations[best_key],
+        at_boundary=abs(best_key-mu_min) <= tolerance || abs(best_key-mu_max) <= tolerance,
+        evaluations=length(ordered_keys),
+        invalid=count(key -> !_finite_objective(search.evaluations[key]), ordered_keys),
+        best_source=search.sources[best_key], evaluation_records=records,
+    )
+end
+
+"""宽范围 anchor 搜索：完整发现网格，并精修网格中的每一个局部谷底。"""
+function _global_grid_refine(
+    score_at;
+    mu_min::Real,
+    mu_max::Real,
+    mu_count::Int,
+    abs_tol::Real=1.0e-4,
+    max_iterations::Int=60,
+    penalty::Real=1.0e3,
+    on_evaluation=(mu, score, source) -> nothing,
+)
+    mu_min < mu_max || throw(ArgumentError("mu_min must be smaller than mu_max"))
+    mu_count >= 3 || throw(ArgumentError("global grid-refine search needs mu_count >= 3"))
+    abs_tol > 0 || throw(ArgumentError("abs_tol must be positive"))
+    max_iterations > 0 || throw(ArgumentError("max_iterations must be positive"))
+    search = _new_scalar_search(
+        score_at; penalty=penalty, on_evaluation=on_evaluation,
+    )
+    interval = _refine_grid_interval!(
+        search; lower=mu_min, upper=mu_max, count=mu_count,
+        abs_tol=abs_tol, max_iterations=max_iterations, source_prefix="anchor",
+    )
+    summary = _scalar_search_summary(
+        search; mu_min=mu_min, mu_max=mu_max, abs_tol=abs_tol,
+    )
+    return merge(summary, (
+        completed=interval.refinements_converged == interval.refined_count,
+        grid_points=mu_count, grid_passes=1,
+        candidate_count=interval.candidate_count,
+        refined_count=interval.refined_count,
+        refinements_converged=interval.refinements_converged,
+        grid_best_mu=interval.grid_best_mu,
+        grid_best_objective=interval.grid_best_objective,
+        search_mode="anchor", center_mu=NaN,
+        search_lower=Float64(mu_min), search_upper=Float64(mu_max),
+        expansions=0, wide_brent_mu=NaN, wide_brent_objective=Inf,
+        wide_brent_converged=false,
+        candidate_mus=interval.grid[interval.candidates],
+    ))
+end
+
+"""
+沿前一尺寸的 μc 做局部细搜；边界最低会自动扩窗，并用宽区间 Brent 作候选对照。
+"""
+function _continuation_grid_refine(
+    score_at;
+    center::Real,
+    mu_min::Real,
+    mu_max::Real,
+    local_half_width::Real,
+    local_count::Int,
+    max_expansions::Int,
+    abs_tol::Real=1.0e-4,
+    max_iterations::Int=60,
+    penalty::Real=1.0e3,
+    on_evaluation=(mu, score, source) -> nothing,
+)
+    mu_min < mu_max || throw(ArgumentError("mu_min must be smaller than mu_max"))
+    isfinite(center) || throw(ArgumentError("continuation center must be finite"))
+    local_half_width > 0 || throw(ArgumentError("local_half_width must be positive"))
+    local_count >= 3 || throw(ArgumentError("local continuation needs at least three grid points"))
+    max_expansions >= 0 || throw(ArgumentError("max_expansions must be nonnegative"))
+    search = _new_scalar_search(
+        score_at; penalty=penalty, on_evaluation=on_evaluation,
+    )
+    clipped_center = clamp(Float64(center), Float64(mu_min), Float64(mu_max))
+    half_width = Float64(local_half_width)
+    expansion = 0
+    intervals = Any[]
+    while true
+        lower = max(Float64(mu_min), clipped_center-half_width)
+        upper = min(Float64(mu_max), clipped_center+half_width)
+        interval = _refine_grid_interval!(
+            search; lower=lower, upper=upper, count=local_count,
+            abs_tol=abs_tol, max_iterations=max_iterations,
+            source_prefix="local_$(expansion)",
+        )
+        push!(intervals, interval)
+        full_range = lower <= mu_min && upper >= mu_max
+        needs_expansion = interval.grid_best_index === nothing ||
+                          interval.grid_best_at_boundary
+        (!needs_expansion || full_range || expansion >= max_expansions) && break
+        expansion += 1
+        half_width *= 2
+        @info "FSS local minimum reached window edge; expanding" center=clipped_center expansion half_width
+    end
+
+    wide_mu = NaN
+    wide_objective = Inf
+    wide_converged = false
+    try
+        wide = optimize(
+            mu -> search.evaluate(mu, "wide_brent"),
+            Float64(mu_min), Float64(mu_max), Brent();
+            abs_tol=Float64(abs_tol), rel_tol=1.0e-5,
+            iterations=max_iterations, show_trace=false,
+        )
+        wide_mu = Float64(Optim.minimizer(wide))
+        search.evaluate(wide_mu, "wide_brent")
+        wide_score = search.evaluations[_mu_key(wide_mu)]
+        wide_objective = _finite_objective(wide_score) ? wide_score.objective : Inf
+        wide_converged = Optim.converged(wide)
+    catch err
+        @warn "FSS wide Brent challenger failed; retaining continuation points" error=sanitize_error(err)
+    end
+
+    summary = _scalar_search_summary(
+        search; mu_min=mu_min, mu_max=mu_max, abs_tol=abs_tol,
+    )
+    final_interval = last(intervals)
+    refined_count = sum(interval.refined_count for interval in intervals)
+    refinements_converged = sum(interval.refinements_converged for interval in intervals)
+    return merge(summary, (
+        completed=wide_converged && refinements_converged == refined_count,
+        grid_points=local_count, grid_passes=length(intervals),
+        candidate_count=sum(interval.candidate_count for interval in intervals),
+        refined_count=refined_count,
+        refinements_converged=refinements_converged,
+        grid_best_mu=final_interval.grid_best_mu,
+        grid_best_objective=final_interval.grid_best_objective,
+        search_mode="continuation", center_mu=clipped_center,
+        search_lower=first(final_interval.grid), search_upper=last(final_interval.grid),
+        expansions=expansion, wide_brent_mu=wide_mu,
+        wide_brent_objective=wide_objective,
+        wide_brent_converged=wide_converged,
+        candidate_mus=final_interval.grid[final_interval.candidates],
+    ))
+end
+
+"""FSS 专用：宽范围 anchor，或沿前一尺寸 μc 的 continuation 搜索。"""
+function optimize_fss_mu_with_score(
+    cache::ModelCache;
+    mu_min::Real,
+    mu_max::Real,
+    mu_count::Int,
+    center=nothing,
+    local_half_width::Real=0.02,
+    local_count::Int=9,
+    max_expansions::Int=3,
+    definition=:fss7,
+    terms=nothing,
+    metric=nothing,
+    abs_tol::Real=1.0e-4,
+    max_iterations::Int=60,
+    penalty::Real=1.0e3,
+    on_evaluation=(mu, score, source) -> nothing,
+)
+    definition = normalize_score_definition(definition)
+    selected_terms = resolve_score_terms(definition, terms)
+    metric = normalize_score_metric(metric, definition)
+    score_at(mu) = try
+        cft_score(
+            solve_spectrum(cache, mu); settings=cache.settings,
+            definition=definition, terms=selected_terms, metric=metric,
+        )
+    catch err
+        @error "FSS mu evaluation failed" mu exception=(err, catch_backtrace())
+        _invalid_score(definition, metric, sanitize_error(err); terms=selected_terms)
+    end
+    result = if center === nothing
+        _global_grid_refine(
+            score_at; mu_min=mu_min, mu_max=mu_max, mu_count=mu_count,
+            abs_tol=abs_tol, max_iterations=max_iterations, penalty=penalty,
+            on_evaluation=on_evaluation,
+        )
+    else
+        _continuation_grid_refine(
+            score_at; center=Float64(center), mu_min=mu_min, mu_max=mu_max,
+            local_half_width=local_half_width, local_count=local_count,
+            max_expansions=max_expansions, abs_tol=abs_tol,
+            max_iterations=max_iterations, penalty=penalty,
+            on_evaluation=on_evaluation,
+        )
+    end
+    if result.score === nothing
+        return merge(result, (
+            score=_invalid_score(
+                definition, metric, "no valid score in FSS global search";
+                terms=selected_terms,
+            ),
+        ))
+    end
+    return result
 end
 
 """
@@ -631,7 +961,8 @@ end
 完整 finite-size scaling 数据生成流程。
 
 对每个 `nm1` 和外层 `scan_value`，`grid` 在固定 μ 网格上选最小点；
-`optimize` 沿用旧 FSS1.jl 的 Brent 连续寻找 μc。两种结果分文件保存。
+`optimize` 对每个固定外层参数沿 size 追踪 μc：小尺寸建立 anchor，大尺寸局部续接。
+两种结果分文件保存。
 """
 function run_fss_scan(
     base::Couplings,
@@ -647,6 +978,18 @@ function run_fss_scan(
     isempty(methods) && throw(ArgumentError("FSS methods must not be empty"))
     all(method -> method in (:grid, :optimize), methods) ||
         throw(ArgumentError("FSS methods must contain only grid and/or optimize"))
+    if :optimize in methods
+        fss.optimize_strategy == :size_continuation || throw(ArgumentError(
+            "FSS optimize_strategy must be size_continuation",
+        ))
+        fss.mu_count >= 3 || throw(ArgumentError(
+            "FSS size_continuation needs mu_count >= 3 for anchor searches",
+        ))
+        fss.optimize_anchor_nm > 0 || throw(ArgumentError("FSS optimize_anchor_nm must be positive"))
+        fss.optimize_local_half_width > 0 || throw(ArgumentError("FSS optimize_local_half_width must be positive"))
+        fss.optimize_local_count >= 3 || throw(ArgumentError("FSS optimize_local_count must be at least 3"))
+        fss.optimize_max_expansions >= 0 || throw(ArgumentError("FSS optimize_max_expansions must be nonnegative"))
+    end
     definition = normalize_score_definition(fss.score_definition)
     selected_terms = resolve_score_terms(
         definition, isempty(fss.score_terms) ? nothing : fss.score_terms,
@@ -660,6 +1003,7 @@ function run_fss_scan(
         method => joinpath(output, "fss_$(method)_results.csv") for method in methods
     )
     completed = Dict{Symbol,Set{String}}()
+    saved_muc = Dict{Tuple{Int,Float64},Float64}()
     for method in methods
         path = paths[method]
         if isfile(path)
@@ -669,20 +1013,43 @@ function run_fss_scan(
             )
             all(String(value) == definition_tag for value in previous.score_definition) ||
                 error("Existing $method FSS data uses a different score; use a new FSS case directory")
+            if method == :optimize && !force
+                for row in eachrow(latest_rows(previous))
+                    if String(row.status) == "ok" && Bool(row.score_valid) &&
+                       isfinite(row.muc)
+                        saved_muc[(Int(row.nm1), Float64(row.scan_value))] = Float64(row.muc)
+                    end
+                end
+            end
         end
         completed[method] = force ? Set{String}() : completed_job_ids(path)
     end
 
-    for nm1 in fss.nm_values
+    # 为复用同一 size 的 Basis/H0 缓存，执行次序仍是 size 在外；这个字典按
+    # scan_value 分开保存上一 size 的 μc，物理上等价于逐条固定参数线做 continuation。
+    previous_size_muc = Dict{Float64,Float64}()
+    for nm1 in sort(unique(fss.nm_values))
         model = build_model(nm1=nm1)
         cache = nothing
         for scan_value in fss.scan_values
             couplings = with_coupling(base, fss.scan_parameter, scan_value)
             job_ids = Dict(method => stable_id(
-                "fss-$method-v1", definition_tag, nm1, fss.scan_parameter, scan_value,
-                coupling_vector(couplings), settings.k, fss.mu_min, fss.mu_max,
-                method == :grid ? fss.mu_count : fss.optimize_abs_tol,
+                "fss-$method-v3", definition_tag, nm1, fss.scan_parameter, scan_value,
+                coupling_vector(couplings), settings, fss.mu_min, fss.mu_max,
+                fss.mu_count,
+                method == :grid ? :fixed_grid : (
+                    fss.optimize_strategy, fss.optimize_anchor_nm,
+                    fss.optimize_local_half_width, fss.optimize_local_count,
+                    fss.optimize_max_expansions, fss.optimize_abs_tol,
+                    fss.optimize_max_iterations,
+                ),
             ) for method in methods)
+            if :optimize in methods && job_ids[:optimize] in completed[:optimize]
+                key = (nm1, Float64(scan_value))
+                if nm1 >= fss.optimize_anchor_nm && haskey(saved_muc, key)
+                    previous_size_muc[Float64(scan_value)] = saved_muc[key]
+                end
+            end
             pending = [method for method in methods if !(job_ids[method] in completed[method])]
             isempty(pending) && continue
             if cache === nothing
@@ -703,17 +1070,66 @@ function run_fss_scan(
                             terms=selected_terms, metric=metric,
                         )
                     else
-                        optimize_mu_with_score(
+                        center = nm1 > fss.optimize_anchor_nm ?
+                                 get(previous_size_muc, Float64(scan_value), nothing) : nothing
+                        center === nothing && nm1 > fss.optimize_anchor_nm && @warn(
+                            "previous-size muc unavailable; using a wide anchor search",
+                            nm1, scan_value,
+                        )
+                        trace_path = joinpath(output, "fss_optimize_evaluations.csv")
+                        evaluation_number = Ref(0)
+                        on_evaluation = function(mu, score, source)
+                            evaluation_number[] += 1
+                            append_csv(trace_path, (
+                                evaluation_id=stable_id("fss-mu-evaluation-v1", job_id, mu),
+                                job_id=job_id, evaluation=evaluation_number[],
+                                status="ok", timestamp=string(now()), nm1=nm1,
+                                scan_parameter=String(fss.scan_parameter),
+                                scan_value=scan_value, mu=mu, source=source,
+                                center_muc=center === nothing ? NaN : center,
+                                objective=score.objective, q=score.q, cost=score.cost,
+                                factor=score.factor, delta_s=score.delta_s,
+                                delta_o=score.delta_o, score_valid=score.valid,
+                                score_reason=score.reason,
+                                raw_gaps=join(score.raw_gaps, ";"),
+                                target_gaps=join(score.target_gaps, ";"),
+                                labels=join(score.labels, ";"),
+                            ))
+                        end
+                        optimize_fss_mu_with_score(
                             cache; mu_min=fss.mu_min, mu_max=fss.mu_max,
+                            mu_count=fss.mu_count,
+                            center=center,
+                            local_half_width=fss.optimize_local_half_width,
+                            local_count=fss.optimize_local_count,
+                            max_expansions=fss.optimize_max_expansions,
                             definition=definition, terms=selected_terms, metric=metric,
                             abs_tol=fss.optimize_abs_tol,
                             max_iterations=fss.optimize_max_iterations,
+                            on_evaluation=on_evaluation,
                         )
                     end
                     score = result.score
+                    search_strategy = method == :grid ? "fixed_grid" : String(fss.optimize_strategy)
+                    candidate_count = method == :grid ? 0 : result.candidate_count
+                    refined_count = method == :grid ? 0 : result.refined_count
+                    refinements_converged = method == :grid ? 0 : result.refinements_converged
+                    grid_best_muc = method == :grid ? result.mu : result.grid_best_mu
+                    grid_best_objective = method == :grid ? score.objective : result.grid_best_objective
+                    best_source = method == :grid ? "grid" : result.best_source
+                    search_mode = method == :grid ? "grid" : result.search_mode
+                    center_muc = method == :grid ? NaN : result.center_mu
+                    search_lower = method == :grid ? fss.mu_min : result.search_lower
+                    search_upper = method == :grid ? fss.mu_max : result.search_upper
+                    grid_points = method == :grid ? fss.mu_count : result.grid_points
+                    grid_passes = method == :grid ? 1 : result.grid_passes
+                    expansions = method == :grid ? 0 : result.expansions
+                    wide_brent_muc = method == :grid ? NaN : result.wide_brent_mu
+                    wide_brent_objective = method == :grid ? Inf : result.wide_brent_objective
+                    wide_brent_converged = method == :grid ? false : result.wide_brent_converged
                     append_csv(path, (
                         score_definition=definition_tag, score_terms=terms_tag,
-                        method=String(method),
+                        method=String(method), search_strategy=search_strategy,
                         job_id=job_id, status="ok", timestamp=string(now()), nm1=nm1,
                         x=nm1^(-0.5), scan_parameter=String(fss.scan_parameter),
                         scan_value=scan_value, muc=result.mu, objective=score.objective,
@@ -722,19 +1138,46 @@ function run_fss_scan(
                         score_valid=score.valid, score_reason=score.reason,
                         completed=result.completed, at_boundary=result.at_boundary,
                         evaluations=result.evaluations, invalid=result.invalid,
+                        search_mode=search_mode, center_muc=center_muc,
+                        search_lower=search_lower, search_upper=search_upper,
+                        grid_points=grid_points, grid_passes=grid_passes,
+                        candidate_count=candidate_count,
+                        refined_count=refined_count,
+                        refinements_converged=refinements_converged,
+                        expansions=expansions,
+                        wide_brent_muc=wide_brent_muc,
+                        wide_brent_objective=wide_brent_objective,
+                        wide_brent_converged=wide_brent_converged,
+                        grid_best_muc=grid_best_muc,
+                        grid_best_objective=grid_best_objective,
+                        best_source=best_source,
                         error="", coupling_namedtuple(couplings)...,
                     ))
+                    if method == :optimize && score.valid && isfinite(result.mu) &&
+                       nm1 >= fss.optimize_anchor_nm
+                        previous_size_muc[Float64(scan_value)] = result.mu
+                    end
                 catch err
                     @error "FSS job failed" method nm1 scan_value exception=(err, catch_backtrace())
                     append_csv(path, (
                         score_definition=definition_tag, score_terms=terms_tag,
                         method=String(method),
+                        search_strategy=method == :grid ? "fixed_grid" : String(fss.optimize_strategy),
                         job_id=job_id, status="error", timestamp=string(now()), nm1=nm1,
                         x=nm1^(-0.5), scan_parameter=String(fss.scan_parameter),
                         scan_value=scan_value, muc=NaN, objective=Inf, q=Inf,
                         cost=Inf, factor=NaN, delta_s=NaN, delta_o=NaN,
                         score_valid=false, score_reason="", completed=false,
                         at_boundary=false, evaluations=0, invalid=0,
+                        search_mode="", center_muc=NaN,
+                        search_lower=NaN, search_upper=NaN,
+                        grid_points=0, grid_passes=0, candidate_count=0,
+                        refined_count=0, refinements_converged=0,
+                        expansions=0, wide_brent_muc=NaN,
+                        wide_brent_objective=Inf,
+                        wide_brent_converged=false,
+                        grid_best_muc=NaN, grid_best_objective=Inf,
+                        best_source="",
                         error=sanitize_error(err), coupling_namedtuple(couplings)...,
                     ))
                 end
