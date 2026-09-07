@@ -3,7 +3,7 @@
 #SBATCH --job-name=mj-2size-uf0
 #SBATCH --nodes=1
 #SBATCH --ntasks-per-node=1
-#SBATCH --cpus-per-task=56
+#SBATCH --cpus-per-task=32
 #SBATCH --partition=sdicnormal
 #SBATCH --output=slurm-%x-%j.out
 
