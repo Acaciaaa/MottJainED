@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # 独立的 N=5/6 matching 调参任务；N=3/4 只给 muc continuation 导航。
-#SBATCH --job-name=mj-2size-vf0
+#SBATCH --job-name=mj-2size-uf0
 #SBATCH --nodes=1
 #SBATCH --ntasks-per-node=1
 #SBATCH --cpus-per-task=56
@@ -9,7 +9,7 @@
 
 # ===== 用户配置区 =====
 config="config/my_run.toml"
-profile="config/two_size_tuning/vf0_refine_stage1.toml"
+profile="config/two_size_tuning/uf0_after_vf0_stage2.toml"
 threads=16
 # =====================
 
