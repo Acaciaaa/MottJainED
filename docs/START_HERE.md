@@ -907,10 +907,10 @@ y(nm1,g) = Delta_inf + amplitude_g*(nm1^(-1/2))^omega
 ```text
 run_fss_scan
   → 对每个启用的 method：plot_fss(y=delta_s)
-  → 对每个启用的 method：fit_fss(y=delta_s)
+  → 对每个启用的 method：plot_fss(y=delta_o)
 ```
 
-只是把 G、H、I 顺序执行。
+只负责计算并画出两种标度维数，不自动做尺寸拟合。
 
 ### K. `scaling`：一个参数点的 scaling-dimension spectrum
 

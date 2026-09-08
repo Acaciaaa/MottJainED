@@ -282,7 +282,7 @@ MottJainED — 可复现的 SU(3) fuzzy-sphere 计算流程
   fss         FSS 固定 grid / 沿 size 追踪 μc；--method=grid|optimize|both
   fss-plot    读取已有 FSS CSV 画图，不重新计算
   fss-fit     联合拟合共享的 Delta_inf 和 omega
-  fss-all     依次计算 FSS、画 delta_s、尝试联合拟合
+  fss-all     依次计算 FSS，并分别画 delta_s 和 delta_o
   scaling     画一个参数点的 scaling-dimension spectrum
   generator-register  把选中的 optimization best.csv 加入全局参数点表
   generator   建立/复用 ED 快照，拟合并固定保存 microscopic Lambda
@@ -567,7 +567,7 @@ function main(args=ARGS)
             output=optimization_output,
         )
     elseif command in ("fss", "fss-all")
-        # fss 只算数据；fss-all 随后还画 ΔS 并尝试联合外推。
+        # fss 只算数据；fss-all 随后分别画 ΔS 和 ΔO，不做尺寸拟合。
         section = _section(config, :fss)
         definition, terms, metric = _score_options(
             section; default_definition="fss7", default_metric="cost",
@@ -598,19 +598,17 @@ function main(args=ARGS)
         if command == "fss-all"
             for method in methods
                 source = joinpath(directory, "fss_$(method)_results.csv")
-                valid = _valid_fss(CSV.read(source, DataFrame), :delta_s)
-                if nrow(valid) == 0
-                    @warn "FSS data were saved, but no valid delta_s rows are available; plot and fit skipped" method source
-                    continue
-                end
-                plot_fss(
-                    source; y=:delta_s,
-                    output=joinpath(directory, "delta_s_$(method)_fss.png"),
-                )
-                try
-                    fit_fss(source; y=:delta_s, output=directory, label=String(method))
-                catch err
-                    @warn "FSS data were saved, but the joint fit is not yet identifiable" method error=sanitize_error(err)
+                data = CSV.read(source, DataFrame)
+                for observable in (:delta_s, :delta_o)
+                    valid = _valid_fss(data, observable)
+                    if nrow(valid) == 0
+                        @warn "FSS data were saved, but no valid rows are available; plot skipped" method observable source
+                        continue
+                    end
+                    plot_fss(
+                        source; y=observable,
+                        output=joinpath(directory, "$(observable)_$(method)_fss.png"),
+                    )
                 end
             end
         end

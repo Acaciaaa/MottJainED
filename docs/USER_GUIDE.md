@@ -110,7 +110,7 @@ julia --startup-file=no --threads=auto --project=. bin/mottjain.jl COMMAND --con
 | 固定 μ 网格找临界点 | `critical` | `[critical]` | `critical_scan.csv`、`critical_point.csv` |
 | 优化任意参数组合 | `optimize` | `[optimization]`，可加 profile | `evaluations.csv`、`best.csv` |
 | 计算 FSS 数据 | `fss` | `[model].nm_values [fss]` | grid/optimize 两套 CSV |
-| FSS 数据、图和拟合 | `fss-all` | `[fss]` | FSS CSV、图、可识别时的拟合 |
+| FSS 数据和两种标度维数图 | `fss-all` | `[fss]` | FSS CSV、`delta_s`/`delta_o` 图 |
 | 只画已有 FSS | `fss-plot` | 已有 FSS CSV | PNG，不做 ED |
 | 只拟合已有 FSS | `fss-fit` | 已有 FSS CSV | fit CSV/PNG，不做 ED |
 | scaling-dimension 图 | `scaling` | `[model] [hamiltonian] [solver] [scaling]` | scaling CSV/PNG |
@@ -257,7 +257,7 @@ julia --threads=auto --project=. bin/mottjain.jl fss \
   --config=config/my_run.toml --override=config/fss_profiles/fss7.toml \
   --method=optimize
 
-# 算数据，再分别画图并尝试联合拟合
+# 算数据，再分别画 delta_s 和 delta_o；不做拟合
 julia --threads=auto --project=. bin/mottjain.jl fss-all \
   --config=config/my_run.toml --override=config/fss_profiles/fss7.toml \
   --method=both
@@ -627,8 +627,8 @@ FSS profile 并修改其中的 `run_name`，不要与 Uf0 扫描混写。
 `config/fss_profiles/no_w_uf0.toml` 和 `no_w_vf0.toml`。它们分别复现旧
 `FSS1.jl` 先扫 Uf0、再扫 Vf0 的结构；这是两组一维扫描，不是 Uf0×Vf0 二维网格。
 
-`fss-all` 会在数据计算后，分别对 grid/optimize 结果画图并尝试额外的联合拟合。
-这一拟合是新项目提供的可选后处理，并不是旧 `FSS1.jl` 找 μc 的步骤。拟合采用
+`fss-all` 会在数据计算后，分别对 grid/optimize 结果画 `delta_s` 和 `delta_o`，
+但不自动拟合。只有明确调用独立的 `fss-fit` 命令时，才会尝试下面的联合拟合：
 
 \[
 \Delta(N,g)=\Delta_\infty+a_gN^{-\omega/2}

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# FSS：用作业数组分别计算 Uf0/Vf0 两种一维扫描，随后各自画图和拟合。
+# FSS：用作业数组分别计算 Uf0/Vf0 两种一维扫描，随后各自画 DeltaS/DeltaO。
 #SBATCH --job-name=mj-fss
 #SBATCH --array=0-1
 #SBATCH --nodes=1
