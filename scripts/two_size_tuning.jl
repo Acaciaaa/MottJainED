@@ -105,6 +105,16 @@ function tuning_settings(config)
         optimize_max_expansions=Int(getvalue(tuning, :optimize_max_expansions, 3)),
         optimize_abs_tol=Float64(getvalue(tuning, :optimize_abs_tol, 1e-4)),
         optimize_max_iterations=Int(getvalue(tuning, :optimize_max_iterations, 100)),
+        optimize_wide_mode=Symbol(lowercase(replace(
+            String(getvalue(tuning, :optimize_wide_mode, "always")), '-' => '_',
+        ))),
+        optimize_wide_adaptive_nm=Int(getvalue(tuning, :optimize_wide_adaptive_nm, 6)),
+        optimize_wide_audit_first=Bool(getvalue(tuning, :optimize_wide_audit_first, false)),
+        optimize_wide_jump_tol=Float64(getvalue(tuning, :optimize_wide_jump_tol, 0.03)),
+        optimize_wide_mu_tol=Float64(getvalue(tuning, :optimize_wide_mu_tol, 5e-3)),
+        optimize_wide_objective_tol=Float64(getvalue(
+            tuning, :optimize_wide_objective_tol, 1e-4,
+        )),
     )
     return (
         tuning=tuning, guide_sizes=guide_sizes, match_sizes=match_sizes,
@@ -299,6 +309,14 @@ function print_plan(config, settings, output_override)
     println("  fixed Hamiltonian = $(MottJainED.coupling_namedtuple(MottJainED._couplings(config)))")
     println("  muc wide range    = [$(settings.fss.mu_min), $(settings.fss.mu_max)]")
     println("  wide anchor sizes = N <= $(settings.fss.optimize_anchor_nm)")
+    println("  wide challenger   = $(settings.fss.optimize_wide_mode)")
+    if settings.fss.optimize_wide_mode == :adaptive
+        println("  adaptive from     = N >= $(settings.fss.optimize_wide_adaptive_nm)")
+        println("  first-point audit = $(settings.fss.optimize_wide_audit_first)")
+        println("  guard tolerances  = jump $(settings.fss.optimize_wide_jump_tol), " *
+                "mu $(settings.fss.optimize_wide_mu_tol), " *
+                "objective $(settings.fss.optimize_wide_objective_tol)")
+    end
     println("  k per sector      = $(settings.solver.k)")
     println("  output prefix     = $(joinpath(project_path(configured_root), label * "_XX"))")
     return nothing
@@ -339,6 +357,12 @@ function main(args=ARGS)
             "match_nm_values" => settings.match_sizes,
             "scan_parameter" => String(settings.fss.scan_parameter),
             "scan_values" => settings.fss.scan_values,
+            "optimize_wide_mode" => String(settings.fss.optimize_wide_mode),
+            "optimize_wide_adaptive_nm" => settings.fss.optimize_wide_adaptive_nm,
+            "optimize_wide_audit_first" => settings.fss.optimize_wide_audit_first,
+            "optimize_wide_jump_tol" => settings.fss.optimize_wide_jump_tol,
+            "optimize_wide_mu_tol" => settings.fss.optimize_wide_mu_tol,
+            "optimize_wide_objective_tol" => settings.fss.optimize_wide_objective_tol,
             "raw_search_directory" => "search",
             "matching_file" => "two_size_matching.csv",
             "zero_crossings_file" => "two_size_zero_crossings.csv",

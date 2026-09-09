@@ -592,6 +592,16 @@ function main(args=ARGS)
             optimize_max_expansions=Int(_get(section, :optimize_max_expansions, 3)),
             optimize_abs_tol=Float64(_get(section, :optimize_abs_tol, 1e-4)),
             optimize_max_iterations=Int(_get(section, :optimize_max_iterations, 60)),
+            optimize_wide_mode=Symbol(lowercase(replace(
+                String(_get(section, :optimize_wide_mode, "always")), '-' => '_',
+            ))),
+            optimize_wide_adaptive_nm=Int(_get(section, :optimize_wide_adaptive_nm, 6)),
+            optimize_wide_audit_first=Bool(_get(section, :optimize_wide_audit_first, false)),
+            optimize_wide_jump_tol=Float64(_get(section, :optimize_wide_jump_tol, 0.03)),
+            optimize_wide_mu_tol=Float64(_get(section, :optimize_wide_mu_tol, 5e-3)),
+            optimize_wide_objective_tol=Float64(_get(
+                section, :optimize_wide_objective_tol, 1e-4,
+            )),
         )
         directory = task_output
         run_fss_scan(couplings, fss, fss_settings; output=directory, force=force)

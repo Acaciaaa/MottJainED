@@ -638,12 +638,18 @@ function _global_grid_refine(
         search_lower=Float64(mu_min), search_upper=Float64(mu_max),
         expansions=0, wide_brent_mu=NaN, wide_brent_objective=Inf,
         wide_brent_converged=false,
+        wide_brent_ran=false, wide_guard_reason="",
+        local_mu=NaN, local_objective=Inf, local_invalid=0,
+        wide_disagreement=false, wide_disagreement_reason="",
         candidate_mus=interval.grid[interval.candidates],
     ))
 end
 
 """
-沿前一尺寸的 μc 做局部细搜；边界最低会自动扩窗，并用宽区间 Brent 作候选对照。
+沿前一尺寸的 μc 做局部细搜；边界最低会自动扩窗。
+
+`wide_mode=:always` 保留原来的宽区间 Brent 候选对照；`wide_mode=:adaptive`
+只在审计点或局部搜索出现明显异常时运行宽区间 challenger。
 """
 function _continuation_grid_refine(
     score_at;
@@ -656,6 +662,12 @@ function _continuation_grid_refine(
     abs_tol::Real=1.0e-4,
     max_iterations::Int=60,
     penalty::Real=1.0e3,
+    wide_mode::Symbol=:always,
+    force_wide::Bool=false,
+    force_wide_reason::AbstractString="",
+    wide_jump_tol::Real=0.03,
+    wide_mu_tol::Real=5.0e-3,
+    wide_objective_tol::Real=1.0e-4,
     on_evaluation=(mu, score, source) -> nothing,
 )
     mu_min < mu_max || throw(ArgumentError("mu_min must be smaller than mu_max"))
@@ -663,6 +675,14 @@ function _continuation_grid_refine(
     local_half_width > 0 || throw(ArgumentError("local_half_width must be positive"))
     local_count >= 3 || throw(ArgumentError("local continuation needs at least three grid points"))
     max_expansions >= 0 || throw(ArgumentError("max_expansions must be nonnegative"))
+    wide_mode in (:always, :adaptive) || throw(ArgumentError(
+        "wide_mode must be always or adaptive",
+    ))
+    wide_jump_tol > 0 || throw(ArgumentError("wide_jump_tol must be positive"))
+    wide_mu_tol > 0 || throw(ArgumentError("wide_mu_tol must be positive"))
+    wide_objective_tol >= 0 || throw(ArgumentError(
+        "wide_objective_tol must be nonnegative",
+    ))
     search = _new_scalar_search(
         score_at; penalty=penalty, on_evaluation=on_evaluation,
     )
@@ -688,33 +708,79 @@ function _continuation_grid_refine(
         @info "FSS local minimum reached window edge; expanding" center=clipped_center expansion half_width
     end
 
+    local_summary = _scalar_search_summary(
+        search; mu_min=mu_min, mu_max=mu_max, abs_tol=abs_tol,
+    )
+    final_interval = last(intervals)
+    wide_guard_reasons = String[]
+    if wide_mode == :always
+        push!(wide_guard_reasons, "always")
+    else
+        if force_wide
+            push!(
+                wide_guard_reasons,
+                isempty(force_wide_reason) ? "forced_audit" : String(force_wide_reason),
+            )
+        end
+        if local_summary.score === nothing
+            push!(wide_guard_reasons, "no_valid_local_score")
+        end
+        if final_interval.grid_best_index === nothing || final_interval.grid_best_at_boundary
+            push!(wide_guard_reasons, "unresolved_local_boundary")
+        end
+        if local_summary.score !== nothing &&
+           abs(local_summary.mu-clipped_center) > Float64(wide_jump_tol)
+            push!(wide_guard_reasons, "large_muc_jump")
+        end
+    end
+    unique!(wide_guard_reasons)
+    wide_ran = !isempty(wide_guard_reasons)
+    severe_guard_reasons = filter(
+        reason -> reason in (
+            "no_valid_local_score", "unresolved_local_boundary", "large_muc_jump",
+        ),
+        wide_guard_reasons,
+    )
+    if !isempty(severe_guard_reasons)
+        @warn "FSS adaptive guard detected a suspicious local muc search; running the wide challenger" center=clipped_center reasons=join(severe_guard_reasons, ";")
+    end
     wide_mu = NaN
     wide_objective = Inf
     wide_converged = false
-    try
-        wide = optimize(
-            mu -> search.evaluate(mu, "wide_brent"),
-            Float64(mu_min), Float64(mu_max), Brent();
-            abs_tol=Float64(abs_tol), rel_tol=1.0e-5,
-            iterations=max_iterations, show_trace=false,
-        )
-        wide_mu = Float64(Optim.minimizer(wide))
-        search.evaluate(wide_mu, "wide_brent")
-        wide_score = search.evaluations[_mu_key(wide_mu)]
-        wide_objective = _finite_objective(wide_score) ? wide_score.objective : Inf
-        wide_converged = Optim.converged(wide)
-    catch err
-        @warn "FSS wide Brent challenger failed; retaining continuation points" error=sanitize_error(err)
+    if wide_ran
+        try
+            wide = optimize(
+                mu -> search.evaluate(mu, "wide_brent"),
+                Float64(mu_min), Float64(mu_max), Brent();
+                abs_tol=Float64(abs_tol), rel_tol=1.0e-5,
+                iterations=max_iterations, show_trace=false,
+            )
+            wide_mu = Float64(Optim.minimizer(wide))
+            search.evaluate(wide_mu, "wide_brent")
+            wide_score = search.evaluations[_mu_key(wide_mu)]
+            wide_objective = _finite_objective(wide_score) ? wide_score.objective : Inf
+            wide_converged = Optim.converged(wide)
+        catch err
+            @warn "FSS wide Brent challenger failed; retaining continuation points" error=sanitize_error(err)
+        end
     end
 
     summary = _scalar_search_summary(
         search; mu_min=mu_min, mu_max=mu_max, abs_tol=abs_tol,
     )
-    final_interval = last(intervals)
+    disagreement_reasons = String[]
+    if wide_ran && local_summary.score !== nothing && isfinite(wide_objective)
+        abs(local_summary.mu-wide_mu) > Float64(wide_mu_tol) &&
+            push!(disagreement_reasons, "muc")
+        abs(Float64(local_summary.score.objective)-Float64(wide_objective)) >
+            Float64(wide_objective_tol) && push!(disagreement_reasons, "objective")
+    elseif wide_ran && (local_summary.score !== nothing) != isfinite(wide_objective)
+        push!(disagreement_reasons, "validity")
+    end
     refined_count = sum(interval.refined_count for interval in intervals)
     refinements_converged = sum(interval.refinements_converged for interval in intervals)
     return merge(summary, (
-        completed=wide_converged && refinements_converged == refined_count,
+        completed=(!wide_ran || wide_converged) && refinements_converged == refined_count,
         grid_points=local_count, grid_passes=length(intervals),
         candidate_count=sum(interval.candidate_count for interval in intervals),
         refined_count=refined_count,
@@ -726,6 +792,14 @@ function _continuation_grid_refine(
         expansions=expansion, wide_brent_mu=wide_mu,
         wide_brent_objective=wide_objective,
         wide_brent_converged=wide_converged,
+        wide_brent_ran=wide_ran,
+        wide_guard_reason=join(wide_guard_reasons, ";"),
+        local_mu=local_summary.mu,
+        local_objective=local_summary.score === nothing ? Inf :
+                        Float64(local_summary.score.objective),
+        local_invalid=local_summary.invalid,
+        wide_disagreement=!isempty(disagreement_reasons),
+        wide_disagreement_reason=join(disagreement_reasons, ";"),
         candidate_mus=final_interval.grid[final_interval.candidates],
     ))
 end
@@ -746,6 +820,12 @@ function optimize_fss_mu_with_score(
     abs_tol::Real=1.0e-4,
     max_iterations::Int=60,
     penalty::Real=1.0e3,
+    wide_mode::Symbol=:always,
+    force_wide::Bool=false,
+    force_wide_reason::AbstractString="",
+    wide_jump_tol::Real=0.03,
+    wide_mu_tol::Real=5.0e-3,
+    wide_objective_tol::Real=1.0e-4,
     on_evaluation=(mu, score, source) -> nothing,
 )
     definition = normalize_score_definition(definition)
@@ -772,6 +852,10 @@ function optimize_fss_mu_with_score(
             local_half_width=local_half_width, local_count=local_count,
             max_expansions=max_expansions, abs_tol=abs_tol,
             max_iterations=max_iterations, penalty=penalty,
+            wide_mode=wide_mode, force_wide=force_wide,
+            force_wide_reason=force_wide_reason,
+            wide_jump_tol=wide_jump_tol, wide_mu_tol=wide_mu_tol,
+            wide_objective_tol=wide_objective_tol,
             on_evaluation=on_evaluation,
         )
     end
@@ -989,6 +1073,23 @@ function run_fss_scan(
         fss.optimize_local_half_width > 0 || throw(ArgumentError("FSS optimize_local_half_width must be positive"))
         fss.optimize_local_count >= 3 || throw(ArgumentError("FSS optimize_local_count must be at least 3"))
         fss.optimize_max_expansions >= 0 || throw(ArgumentError("FSS optimize_max_expansions must be nonnegative"))
+        fss.optimize_wide_mode in (:always, :adaptive) || throw(ArgumentError(
+            "FSS optimize_wide_mode must be always or adaptive",
+        ))
+        if fss.optimize_wide_mode == :adaptive
+            fss.optimize_wide_adaptive_nm > fss.optimize_anchor_nm || throw(ArgumentError(
+                "FSS optimize_wide_adaptive_nm must be larger than optimize_anchor_nm",
+            ))
+        end
+        fss.optimize_wide_jump_tol > 0 || throw(ArgumentError(
+            "FSS optimize_wide_jump_tol must be positive",
+        ))
+        fss.optimize_wide_mu_tol > 0 || throw(ArgumentError(
+            "FSS optimize_wide_mu_tol must be positive",
+        ))
+        fss.optimize_wide_objective_tol >= 0 || throw(ArgumentError(
+            "FSS optimize_wide_objective_tol must be nonnegative",
+        ))
     end
     definition = normalize_score_definition(fss.score_definition)
     selected_terms = resolve_score_terms(
@@ -1004,6 +1105,7 @@ function run_fss_scan(
     )
     completed = Dict{Symbol,Set{String}}()
     saved_muc = Dict{Tuple{Int,Float64},Float64}()
+    wide_fallback_sizes = Set{Int}()
     for method in methods
         path = paths[method]
         if isfile(path)
@@ -1019,6 +1121,11 @@ function run_fss_scan(
                        isfinite(row.muc)
                         saved_muc[(Int(row.nm1), Float64(row.scan_value))] = Float64(row.muc)
                     end
+                    if fss.optimize_wide_mode == :adaptive &&
+                       "wide_disagreement" in names(previous) &&
+                       !ismissing(row.wide_disagreement) && Bool(row.wide_disagreement)
+                        push!(wide_fallback_sizes, Int(row.nm1))
+                    end
                 end
             end
         end
@@ -1031,17 +1138,20 @@ function run_fss_scan(
     for nm1 in sort(unique(fss.nm_values))
         model = build_model(nm1=nm1)
         cache = nothing
-        for scan_value in fss.scan_values
+        for (scan_index, scan_value) in enumerate(fss.scan_values)
             couplings = with_coupling(base, fss.scan_parameter, scan_value)
             job_ids = Dict(method => stable_id(
-                "fss-$method-v3", definition_tag, nm1, fss.scan_parameter, scan_value,
+                "fss-$method-v4", definition_tag, nm1, fss.scan_parameter, scan_value,
                 coupling_vector(couplings), settings, fss.mu_min, fss.mu_max,
                 fss.mu_count,
                 method == :grid ? :fixed_grid : (
                     fss.optimize_strategy, fss.optimize_anchor_nm,
                     fss.optimize_local_half_width, fss.optimize_local_count,
                     fss.optimize_max_expansions, fss.optimize_abs_tol,
-                    fss.optimize_max_iterations,
+                    fss.optimize_max_iterations, fss.optimize_wide_mode,
+                    fss.optimize_wide_adaptive_nm, fss.optimize_wide_audit_first,
+                    fss.optimize_wide_jump_tol, fss.optimize_wide_mu_tol,
+                    fss.optimize_wide_objective_tol,
                 ),
             ) for method in methods)
             if :optimize in methods && job_ids[:optimize] in completed[:optimize]
@@ -1077,6 +1187,15 @@ function run_fss_scan(
                             nm1, scan_value,
                         )
                         trace_path = joinpath(output, "fss_optimize_evaluations.csv")
+                        adaptive_wide = fss.optimize_wide_mode == :adaptive &&
+                                        nm1 >= fss.optimize_wide_adaptive_nm
+                        fallback_active = adaptive_wide && nm1 in wide_fallback_sizes
+                        audit_point = adaptive_wide && fss.optimize_wide_audit_first &&
+                                      scan_index == firstindex(fss.scan_values)
+                        force_wide = fallback_active || audit_point
+                        force_wide_reason = fallback_active ?
+                            "prior_audit_disagreement" :
+                            (audit_point ? "first_point_audit" : "")
                         evaluation_number = Ref(0)
                         on_evaluation = function(mu, score, source)
                             evaluation_number[] += 1
@@ -1106,6 +1225,12 @@ function run_fss_scan(
                             definition=definition, terms=selected_terms, metric=metric,
                             abs_tol=fss.optimize_abs_tol,
                             max_iterations=fss.optimize_max_iterations,
+                            wide_mode=adaptive_wide ? :adaptive : :always,
+                            force_wide=force_wide,
+                            force_wide_reason=force_wide_reason,
+                            wide_jump_tol=fss.optimize_wide_jump_tol,
+                            wide_mu_tol=fss.optimize_wide_mu_tol,
+                            wide_objective_tol=fss.optimize_wide_objective_tol,
                             on_evaluation=on_evaluation,
                         )
                     end
@@ -1127,6 +1252,14 @@ function run_fss_scan(
                     wide_brent_muc = method == :grid ? NaN : result.wide_brent_mu
                     wide_brent_objective = method == :grid ? Inf : result.wide_brent_objective
                     wide_brent_converged = method == :grid ? false : result.wide_brent_converged
+                    wide_brent_ran = method == :grid ? false : result.wide_brent_ran
+                    wide_guard_reason = method == :grid ? "" : result.wide_guard_reason
+                    local_muc = method == :grid ? NaN : result.local_mu
+                    local_objective = method == :grid ? Inf : result.local_objective
+                    local_invalid = method == :grid ? 0 : result.local_invalid
+                    wide_disagreement = method == :grid ? false : result.wide_disagreement
+                    wide_disagreement_reason = method == :grid ? "" :
+                                               result.wide_disagreement_reason
                     append_csv(path, (
                         score_definition=definition_tag, score_terms=terms_tag,
                         method=String(method), search_strategy=search_strategy,
@@ -1148,6 +1281,13 @@ function run_fss_scan(
                         wide_brent_muc=wide_brent_muc,
                         wide_brent_objective=wide_brent_objective,
                         wide_brent_converged=wide_brent_converged,
+                        wide_brent_ran=wide_brent_ran,
+                        wide_guard_reason=wide_guard_reason,
+                        local_muc=local_muc,
+                        local_objective=local_objective,
+                        local_invalid=local_invalid,
+                        wide_disagreement=wide_disagreement,
+                        wide_disagreement_reason=wide_disagreement_reason,
                         grid_best_muc=grid_best_muc,
                         grid_best_objective=grid_best_objective,
                         best_source=best_source,
@@ -1156,6 +1296,13 @@ function run_fss_scan(
                     if method == :optimize && score.valid && isfinite(result.mu) &&
                        nm1 >= fss.optimize_anchor_nm
                         previous_size_muc[Float64(scan_value)] = result.mu
+                    end
+                    if method == :optimize &&
+                       fss.optimize_wide_mode == :adaptive &&
+                       nm1 >= fss.optimize_wide_adaptive_nm &&
+                       result.wide_disagreement
+                        push!(wide_fallback_sizes, nm1)
+                        @warn "FSS local/wide audit disagreed; remaining points at this size will keep the wide challenger" nm1 scan_value local_muc wide_brent_muc local_objective wide_brent_objective reason=wide_disagreement_reason
                     end
                 catch err
                     @error "FSS job failed" method nm1 scan_value exception=(err, catch_backtrace())
@@ -1176,6 +1323,9 @@ function run_fss_scan(
                         expansions=0, wide_brent_muc=NaN,
                         wide_brent_objective=Inf,
                         wide_brent_converged=false,
+                        wide_brent_ran=false, wide_guard_reason="",
+                        local_muc=NaN, local_objective=Inf, local_invalid=0,
+                        wide_disagreement=false, wide_disagreement_reason="",
                         grid_best_muc=NaN, grid_best_objective=Inf,
                         best_source="",
                         error=sanitize_error(err), coupling_namedtuple(couplings)...,

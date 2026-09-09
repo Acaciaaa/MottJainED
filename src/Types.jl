@@ -169,6 +169,12 @@ Base.@kwdef struct FSSSettings
     optimize_max_expansions::Int = 3
     optimize_abs_tol::Float64 = 1.0e-4
     optimize_max_iterations::Int = 60
+    optimize_wide_mode::Symbol = :always
+    optimize_wide_adaptive_nm::Int = 6
+    optimize_wide_audit_first::Bool = false
+    optimize_wide_jump_tol::Float64 = 0.03
+    optimize_wide_mu_tol::Float64 = 5.0e-3
+    optimize_wide_objective_tol::Float64 = 1.0e-4
 end
 
 # 所有允许从配置和优化器中修改的 Hamiltonian 参数名。

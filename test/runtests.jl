@@ -244,6 +244,31 @@ end
     @test guarded.score.objective < guarded.wide_brent_objective
     @test startswith(guarded.best_source, "local_")
 
+    # 自适应模式在平稳 continuation 上省掉 wide challenger；审计点仍强制比较。
+    adaptive = MottJainED._continuation_grid_refine(
+        mu -> (valid=true, objective=(mu-0.51)^2);
+        center=0.50, mu_min=0.0, mu_max=1.0,
+        local_half_width=0.05, local_count=9, max_expansions=2,
+        abs_tol=1.0e-7, max_iterations=100, wide_mode=:adaptive,
+    )
+    @test adaptive.mu ≈ 0.51 atol=5e-5
+    @test !adaptive.wide_brent_ran
+    @test isempty(adaptive.wide_guard_reason)
+    @test adaptive.completed
+
+    audited = MottJainED._continuation_grid_refine(
+        hidden_narrow_valley; center=0.09584,
+        mu_min=-0.095, mu_max=0.305,
+        local_half_width=0.02, local_count=9, max_expansions=3,
+        abs_tol=1.0e-7, max_iterations=100, wide_mode=:adaptive,
+        force_wide=true, force_wide_reason="first_point_audit",
+    )
+    @test audited.wide_brent_ran
+    @test audited.wide_guard_reason == "first_point_audit"
+    @test audited.wide_disagreement
+    @test occursin("muc", audited.wide_disagreement_reason)
+    @test occursin("objective", audited.wide_disagreement_reason)
+
     # 前一 size 的 seed 偏了一点时，窗口最低落在边界会触发扩大，而不是直接接受边界。
     expanded = MottJainED._continuation_grid_refine(
         mu -> (valid=true, objective=(mu-0.56)^2);
@@ -254,6 +279,16 @@ end
     @test expanded.mu ≈ 0.56 atol=5e-5
     @test expanded.expansions >= 2
     @test expanded.search_lower <= 0.56 <= expanded.search_upper
+
+    jump_guarded = MottJainED._continuation_grid_refine(
+        mu -> (valid=true, objective=(mu-0.56)^2);
+        center=0.50, mu_min=0.0, mu_max=1.0,
+        local_half_width=0.02, local_count=5, max_expansions=3,
+        abs_tol=1.0e-7, max_iterations=100, wide_mode=:adaptive,
+        wide_jump_tol=0.03,
+    )
+    @test jump_guarded.wide_brent_ran
+    @test occursin("large_muc_jump", jump_guarded.wide_guard_reason)
 
     # 无效区间不能胜出；若最低点确实在总边界，则保留边界而不强行做 Brent。
     endpoint = MottJainED._global_grid_refine(
@@ -273,6 +308,11 @@ end
     ]) == [2]
     @test_throws ArgumentError MottJainED._global_grid_refine(
         multiwell; mu_min=0.0, mu_max=1.0, mu_count=2,
+    )
+    @test_throws ArgumentError MottJainED._continuation_grid_refine(
+        multiwell; center=0.5, mu_min=0.0, mu_max=1.0,
+        local_half_width=0.02, local_count=5, max_expansions=1,
+        wide_mode=:unknown,
     )
 end
 

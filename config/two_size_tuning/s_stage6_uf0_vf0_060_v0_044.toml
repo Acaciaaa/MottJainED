@@ -1,0 +1,43 @@
+# S-only iterative FSS, stage 6d: check the Uf0 direction at the predicted crossing.
+# The first scan value is the N=6 local/wide audit point; output analysis is sorted by Uf0.
+
+[hamiltonian]
+Uf = 0.46
+Uf0 = 2.00
+U0 = 4.14
+Vf = 0.0
+Vf0 = 0.60
+V0 = 0.44
+t = 0.5
+mu = 0.12177396790686024
+
+[two_size_tuning]
+run_name = "s_stage6_uf0_vf0_060_v0_044"
+output_root = "output/two_size_tuning"
+
+guide_nm_values = [3, 4]
+match_nm_values = [5, 6]
+
+scan_parameter = "Uf0"
+scan_values = [2.00, 1.65, 2.20]
+
+k = 30
+score_terms = ["ds_s", "j", "curlj", "dj_rank1", "t_rank1"]
+score_metric = "q"
+
+mu_min = -0.095
+mu_max = 0.305
+mu_count = 41
+optimize_anchor_nm = 4
+optimize_local_half_width = 0.02
+optimize_local_count = 9
+optimize_max_expansions = 3
+optimize_abs_tol = 2.0e-5
+optimize_max_iterations = 100
+
+optimize_wide_mode = "adaptive"
+optimize_wide_adaptive_nm = 6
+optimize_wide_audit_first = true
+optimize_wide_jump_tol = 0.03
+optimize_wide_mu_tol = 5.0e-3
+optimize_wide_objective_tol = 1.0e-4

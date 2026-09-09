@@ -94,6 +94,14 @@ optimize_local_count = 9
 optimize_max_expansions = 3
 optimize_abs_tol = 1.0e-4
 optimize_max_iterations = 60
+# always 保留每点完整 wide Brent；adaptive 只在指定尺寸的审计点或异常点运行。
+# 旧 FSS 默认仍用 always；耗时的大尺寸扫描可在独立 profile 中启用 adaptive。
+optimize_wide_mode = "always"
+optimize_wide_adaptive_nm = 6
+optimize_wide_audit_first = false
+optimize_wide_jump_tol = 0.03
+optimize_wide_mu_tol = 5.0e-3
+optimize_wide_objective_tol = 1.0e-4
 
 [optimization]
 # 公共优化器设置；free/values/bounds/score_terms 放在 optimization_profiles 子 TOML。
