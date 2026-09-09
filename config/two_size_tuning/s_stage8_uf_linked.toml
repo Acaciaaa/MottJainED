@@ -1,0 +1,46 @@
+# S-only iterative FSS, stage 8: validate Uf near the current working point.
+# U0 follows every scan value as U0=9*Uf; N=3,4 only guide the muc search,
+# while the matching table and plot use N=5,6 exclusively.
+
+[hamiltonian]
+Uf = 0.46
+Uf0 = 1.834
+U0 = 4.14
+Vf = 0.0
+Vf0 = 0.55
+V0 = 0.34
+t = 0.5
+mu = 0.12177396790686024
+
+[two_size_tuning]
+run_name = "s_stage8_uf_linked"
+output_root = "output/two_size_tuning"
+
+guide_nm_values = [3, 4]
+match_nm_values = [5, 6]
+
+scan_parameter = "Uf"
+# Audit the current point first; analysis output is sorted numerically by Uf.
+scan_values = [0.46, 0.44, 0.48]
+u0_over_uf = 9.0
+
+k = 30
+score_terms = ["ds_s", "j", "curlj", "dj_rank1", "t_rank1"]
+score_metric = "q"
+
+mu_min = -0.095
+mu_max = 0.305
+mu_count = 41
+optimize_anchor_nm = 4
+optimize_local_half_width = 0.02
+optimize_local_count = 9
+optimize_max_expansions = 3
+optimize_abs_tol = 2.0e-5
+optimize_max_iterations = 100
+
+optimize_wide_mode = "adaptive"
+optimize_wide_adaptive_nm = 6
+optimize_wide_audit_first = true
+optimize_wide_jump_tol = 0.03
+optimize_wide_mu_tol = 5.0e-3
+optimize_wide_objective_tol = 1.0e-4

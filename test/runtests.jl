@@ -29,6 +29,22 @@ end
     @test_throws ArgumentError MottJainED.validate(Couplings(mu=NaN))
 end
 
+@testset "Linked Uf/U0 FSS scan" begin
+    base = Couplings(Uf=0.46, U0=4.14)
+    uf_scan = FSSSettings(scan_parameter=:Uf, scan_values=[0.44, 0.46, 0.48])
+    tied = MottJainED._fss_scan_couplings(
+        base, uf_scan, 0.44; u0_over_uf=9.0,
+    )
+    @test tied.Uf == 0.44
+    @test tied.U0 == 3.96
+    @test tied.Uf0 == base.Uf0
+
+    v0_scan = FSSSettings(scan_parameter=:V0, scan_values=[0.34])
+    @test_throws ArgumentError MottJainED._fss_scan_couplings(
+        base, v0_scan, 0.34; u0_over_uf=9.0,
+    )
+end
+
 function state(energy, l2, c2; z=1, r=1)
     return SpectrumState(energy, l2, c2, SectorKey(z, r), 1, nothing, nothing)
 end

@@ -71,6 +71,16 @@ function tuning_settings(config)
     isempty(scan_values) && throw(ArgumentError(
         "two_size_tuning.scan_values cannot be empty",
     ))
+    raw_u0_over_uf = getvalue(tuning, :u0_over_uf, nothing)
+    u0_over_uf = raw_u0_over_uf === nothing ? nothing : Float64(raw_u0_over_uf)
+    if u0_over_uf !== nothing
+        scan_parameter == :Uf || throw(ArgumentError(
+            "two_size_tuning.u0_over_uf requires scan_parameter = \"Uf\"",
+        ))
+        isfinite(u0_over_uf) || throw(ArgumentError(
+            "two_size_tuning.u0_over_uf must be finite",
+        ))
+    end
 
     definition, terms, metric = MottJainED._score_options(
         tuning; default_definition="fss7", default_metric="q",
@@ -118,7 +128,7 @@ function tuning_settings(config)
     )
     return (
         tuning=tuning, guide_sizes=guide_sizes, match_sizes=match_sizes,
-        all_sizes=all_sizes, fss=fss, solver=solver,
+        all_sizes=all_sizes, fss=fss, solver=solver, u0_over_uf=u0_over_uf,
     )
 end
 
@@ -306,6 +316,9 @@ function print_plan(config, settings, output_override)
     println("  matching sizes    = $(settings.match_sizes)  (only these enter analysis)")
     println("  scan parameter    = $(settings.fss.scan_parameter)")
     println("  scan values       = $(settings.fss.scan_values)")
+    if settings.u0_over_uf !== nothing
+        println("  linked coupling   = U0 = $(settings.u0_over_uf) * Uf")
+    end
     println("  fixed Hamiltonian = $(MottJainED.coupling_namedtuple(MottJainED._couplings(config)))")
     println("  muc wide range    = [$(settings.fss.mu_min), $(settings.fss.mu_max)]")
     println("  wide anchor sizes = N <= $(settings.fss.optimize_anchor_nm)")
@@ -351,7 +364,7 @@ function main(args=ARGS)
         MottJainED.write_run_metadata(
             output; command="two-size-tuning", config_path=profile_path,
         )
-        MottJainED.atomic_toml(joinpath(output, "two_size_manifest.toml"), Dict(
+        manifest = Dict{String,Any}(
             "command" => "two-size-tuning",
             "guide_nm_values" => settings.guide_sizes,
             "match_nm_values" => settings.match_sizes,
@@ -367,13 +380,18 @@ function main(args=ARGS)
             "matching_file" => "two_size_matching.csv",
             "zero_crossings_file" => "two_size_zero_crossings.csv",
             "plot_file" => "two_size_matching.png",
-        ))
+        )
+        if settings.u0_over_uf !== nothing
+            manifest["u0_over_uf"] = settings.u0_over_uf
+        end
+        MottJainED.atomic_toml(joinpath(output, "two_size_manifest.toml"), manifest)
         unless_analysis_only = !option_bool(options, "analyze-only", false)
         if unless_analysis_only
             MottJainED.run_fss_scan(
                 MottJainED._couplings(config), settings.fss, settings.solver;
                 output=joinpath(output, "search"),
                 force=option_bool(options, "force", false),
+                u0_over_uf=settings.u0_over_uf,
             )
         end
         matching, crossings = analyze_results(output, settings)

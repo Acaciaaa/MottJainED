@@ -1041,6 +1041,24 @@ function run_parameter_optimization(
     return (couplings=best, score=score, result=result, evaluations=evaluation[])
 end
 
+function _fss_scan_couplings(
+    base::Couplings,
+    fss::FSSSettings,
+    scan_value::Real;
+    u0_over_uf::Union{Nothing,Real}=nothing,
+)
+    couplings = with_coupling(base, fss.scan_parameter, scan_value)
+    if u0_over_uf !== nothing
+        fss.scan_parameter == :Uf || throw(ArgumentError(
+            "u0_over_uf can only be used when FSS scan_parameter is Uf",
+        ))
+        ratio = Float64(u0_over_uf)
+        isfinite(ratio) || throw(ArgumentError("u0_over_uf must be finite"))
+        couplings = with_coupling(couplings, :U0, ratio * couplings.Uf)
+    end
+    return validate(couplings)
+end
+
 """
 完整 finite-size scaling 数据生成流程。
 
@@ -1054,6 +1072,7 @@ function run_fss_scan(
     settings::SolverSettings=SolverSettings();
     output::AbstractString=joinpath(PACKAGE_ROOT, "output", "fss"),
     force::Bool=false,
+    u0_over_uf::Union{Nothing,Real}=nothing,
 )
     fss.scan_parameter in HAMILTONIAN_FIELDS || throw(ArgumentError("Unknown scan parameter $(fss.scan_parameter)"))
     fss.scan_parameter == :mu && throw(ArgumentError("FSS scan_parameter cannot be mu; mu already has its own grid"))
@@ -1139,7 +1158,9 @@ function run_fss_scan(
         model = build_model(nm1=nm1)
         cache = nothing
         for (scan_index, scan_value) in enumerate(fss.scan_values)
-            couplings = with_coupling(base, fss.scan_parameter, scan_value)
+            couplings = _fss_scan_couplings(
+                base, fss, scan_value; u0_over_uf=u0_over_uf,
+            )
             job_ids = Dict(method => stable_id(
                 "fss-$method-v4", definition_tag, nm1, fss.scan_parameter, scan_value,
                 coupling_vector(couplings), settings, fss.mu_min, fss.mu_max,
