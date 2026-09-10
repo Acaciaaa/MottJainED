@@ -1,0 +1,64 @@
+# Dedicated observable check for the retained stage-8 point.
+# The N=6 muc and scale factor are taken from the audited Uf=0.46 FSS row.
+
+[model]
+# scaling and density use nm1; gap and FSS use nm_values.
+nm1 = 6
+nm_values = [3, 4, 5, 6]
+
+[hamiltonian]
+Uf = 0.46
+Uf0 = 1.834
+U0 = 4.14
+Vf = 0.0
+Vf0 = 0.55
+V0 = 0.34
+t = 0.5
+# Audited N=6 optimum from s_stage8_uf_linked, Uf=0.46.
+mu = 0.1435201189514
+
+[gap]
+k = 5
+mu_min = -0.095
+mu_max = 0.305
+mu_count = 41
+
+[density]
+k = 3
+mu_min = 0.02
+mu_max = 0.22
+mu_count = 51
+
+[scaling]
+l2_max = 20.0
+c2_max = 8.0
+# Audited N=6 CFT scale at the muc above.
+factor = 0.03273683540293812
+
+[fss]
+# A single fixed outer point reproduces the existing stage-8 FSS rows.
+methods = ["optimize"]
+k = 30
+score_terms = ["ds_s", "j", "curlj", "dj_rank1", "t_rank1"]
+score_metric = "q"
+scan_parameter = "Uf"
+scan_values = [0.46]
+mu_min = -0.095
+mu_max = 0.305
+mu_count = 41
+optimize_strategy = "size_continuation"
+optimize_anchor_nm = 4
+optimize_local_half_width = 0.02
+optimize_local_count = 9
+optimize_max_expansions = 3
+optimize_abs_tol = 2.0e-5
+optimize_max_iterations = 100
+optimize_wide_mode = "adaptive"
+optimize_wide_adaptive_nm = 6
+optimize_wide_audit_first = true
+optimize_wide_jump_tol = 0.03
+optimize_wide_mu_tol = 5.0e-3
+optimize_wide_objective_tol = 1.0e-4
+
+[output]
+run_name = "recommended_uf0_1834_vf0_055_v0_034"
