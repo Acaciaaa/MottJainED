@@ -120,6 +120,7 @@ function tuning_settings(config)
         ))),
         optimize_wide_adaptive_nm=Int(getvalue(tuning, :optimize_wide_adaptive_nm, 6)),
         optimize_wide_audit_first=Bool(getvalue(tuning, :optimize_wide_audit_first, false)),
+        optimize_wide_audit_all=Bool(getvalue(tuning, :optimize_wide_audit_all, false)),
         optimize_wide_jump_tol=Float64(getvalue(tuning, :optimize_wide_jump_tol, 0.03)),
         optimize_wide_mu_tol=Float64(getvalue(tuning, :optimize_wide_mu_tol, 5e-3)),
         optimize_wide_objective_tol=Float64(getvalue(
@@ -326,6 +327,7 @@ function print_plan(config, settings, output_override)
     if settings.fss.optimize_wide_mode == :adaptive
         println("  adaptive from     = N >= $(settings.fss.optimize_wide_adaptive_nm)")
         println("  first-point audit = $(settings.fss.optimize_wide_audit_first)")
+        println("  all-point audit   = $(settings.fss.optimize_wide_audit_all)")
         println("  guard tolerances  = jump $(settings.fss.optimize_wide_jump_tol), " *
                 "mu $(settings.fss.optimize_wide_mu_tol), " *
                 "objective $(settings.fss.optimize_wide_objective_tol)")
@@ -373,6 +375,7 @@ function main(args=ARGS)
             "optimize_wide_mode" => String(settings.fss.optimize_wide_mode),
             "optimize_wide_adaptive_nm" => settings.fss.optimize_wide_adaptive_nm,
             "optimize_wide_audit_first" => settings.fss.optimize_wide_audit_first,
+            "optimize_wide_audit_all" => settings.fss.optimize_wide_audit_all,
             "optimize_wide_jump_tol" => settings.fss.optimize_wide_jump_tol,
             "optimize_wide_mu_tol" => settings.fss.optimize_wide_mu_tol,
             "optimize_wide_objective_tol" => settings.fss.optimize_wide_objective_tol,

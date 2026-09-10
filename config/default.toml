@@ -98,7 +98,10 @@ optimize_max_iterations = 60
 # 旧 FSS 默认仍用 always；耗时的大尺寸扫描可在独立 profile 中启用 adaptive。
 optimize_wide_mode = "always"
 optimize_wide_adaptive_nm = 6
+# first 只审计每组扫描的第一个点；all=true 时审计该尺寸的每个参数点。
+# all 主要用于探索此前从未扫描过的新耦合，默认关闭以控制计算量。
 optimize_wide_audit_first = false
+optimize_wide_audit_all = false
 optimize_wide_jump_tol = 0.03
 optimize_wide_mu_tol = 5.0e-3
 optimize_wide_objective_tol = 1.0e-4

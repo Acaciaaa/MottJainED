@@ -1171,6 +1171,7 @@ function run_fss_scan(
                     fss.optimize_max_expansions, fss.optimize_abs_tol,
                     fss.optimize_max_iterations, fss.optimize_wide_mode,
                     fss.optimize_wide_adaptive_nm, fss.optimize_wide_audit_first,
+                    fss.optimize_wide_audit_all,
                     fss.optimize_wide_jump_tol, fss.optimize_wide_mu_tol,
                     fss.optimize_wide_objective_tol,
                 ),
@@ -1211,8 +1212,11 @@ function run_fss_scan(
                         adaptive_wide = fss.optimize_wide_mode == :adaptive &&
                                         nm1 >= fss.optimize_wide_adaptive_nm
                         fallback_active = adaptive_wide && nm1 in wide_fallback_sizes
-                        audit_point = adaptive_wide && fss.optimize_wide_audit_first &&
-                                      scan_index == firstindex(fss.scan_values)
+                        audit_point = adaptive_wide && (
+                            fss.optimize_wide_audit_all ||
+                            (fss.optimize_wide_audit_first &&
+                             scan_index == firstindex(fss.scan_values))
+                        )
                         force_wide = fallback_active || audit_point
                         force_wide_reason = fallback_active ?
                             "prior_audit_disagreement" :

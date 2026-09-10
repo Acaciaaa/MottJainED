@@ -1,0 +1,50 @@
+# Vf stability probe, stage 12a: perturb the physically preferred Vf=0 point
+# symmetrically without treating nonzero Vf as a candidate recommendation.
+# The existing Vf=0 stage-8 result is the baseline. N=3,4 guide muc only;
+# N=5,6 enter matching, and both new N=6 endpoints receive a wide audit.
+
+[hamiltonian]
+Uf = 0.46
+Uf0 = 1.834
+U0 = 4.14
+Vf = 0.0
+Vf0 = 0.55
+V0 = 0.34
+t = 0.5
+mu = 0.1435201189514
+
+[two_size_tuning]
+run_name = "s_stage12_vf_retained"
+output_root = "output/two_size_tuning"
+
+guide_nm_values = [3, 4]
+match_nm_values = [5, 6]
+
+scan_parameter = "Vf"
+# Keep the perturbation small because Vf=0 is the physically preferred model.
+# The central point is already available from stage 8 and is not recomputed.
+scan_values = [-0.05, 0.05]
+
+k = 30
+# muc is still defined by the same five CFT tower relations as all prior stages.
+# fss_optimize_evaluations.csv records each relation's raw gap, target, and label.
+score_terms = ["ds_s", "j", "curlj", "dj_rank1", "t_rank1"]
+score_metric = "q"
+
+mu_min = -0.095
+mu_max = 0.305
+mu_count = 41
+optimize_anchor_nm = 4
+optimize_local_half_width = 0.02
+optimize_local_count = 9
+optimize_max_expansions = 3
+optimize_abs_tol = 2.0e-5
+optimize_max_iterations = 100
+
+optimize_wide_mode = "adaptive"
+optimize_wide_adaptive_nm = 6
+optimize_wide_audit_first = false
+optimize_wide_audit_all = true
+optimize_wide_jump_tol = 0.03
+optimize_wide_mu_tol = 5.0e-3
+optimize_wide_objective_tol = 1.0e-4

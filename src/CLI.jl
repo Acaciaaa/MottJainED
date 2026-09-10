@@ -597,6 +597,7 @@ function main(args=ARGS)
             ))),
             optimize_wide_adaptive_nm=Int(_get(section, :optimize_wide_adaptive_nm, 6)),
             optimize_wide_audit_first=Bool(_get(section, :optimize_wide_audit_first, false)),
+            optimize_wide_audit_all=Bool(_get(section, :optimize_wide_audit_all, false)),
             optimize_wide_jump_tol=Float64(_get(section, :optimize_wide_jump_tol, 0.03)),
             optimize_wide_mu_tol=Float64(_get(section, :optimize_wide_mu_tol, 5e-3)),
             optimize_wide_objective_tol=Float64(_get(
