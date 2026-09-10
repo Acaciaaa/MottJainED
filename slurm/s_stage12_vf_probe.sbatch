@@ -7,7 +7,7 @@
 #SBATCH --array=0-1
 #SBATCH --nodes=1
 #SBATCH --ntasks-per-node=1
-#SBATCH --cpus-per-task=20
+#SBATCH --cpus-per-task=8
 #SBATCH --partition=sdicnormal
 #SBATCH --output=slurm-%x-%A_%a.out
 
@@ -17,7 +17,7 @@ profiles=(
   "config/two_size_tuning/s_stage12_vf_retained.toml"
   "config/two_size_tuning/s_stage12_vf_compromise.toml"
 )
-threads=16
+threads=8
 # =========================
 
 set -euo pipefail
