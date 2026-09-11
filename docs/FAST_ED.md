@@ -49,15 +49,13 @@ N=6 检查。
 
 ## N=7 建议顺序
 
-实测 N=6 缓存为 754 MB。按 N=6 到 N=7 的 Hilbert-space 和稀疏度增长粗估，
-N=7 四个文件合计可能约 20--30 GB；这不是精确上限，建议至少留 40 GB 可用
-工作盘。
+N=7 首次服务器实测的四个缓存合计为 25 GB，构造用时 14 分 40 秒，峰值内存
+22.90 GB。建议至少留 40 GB 可用工作盘。最大 sector 的 k=20 pilot 用时
+7 分 59 秒，峰值内存约 13.3 GB。`sdicnormal` 的 8 CPU 额度约为 61 GB，已有
+充足余量；正式 sector array 使用 8 CPU/8 线程。缓存模板仍保留首次运行时的
+16 CPU 保守额度。
 
-N=7 第一次运行尚无真实 MaxRSS。模板因此先申请 16 CPU，但 `THREADS=8`：计算
-仍采用 N=6 实测较快的 8 线程，额外 CPU 主要利用 `sdicnormal` 默认约
-7824 MB/CPU 的规则，把每个任务的内存额度提高到约 122 GB。跑完后必须用
-`seff JOBID` 检查 MaxRSS；确认余量后才考虑降回 8 CPU。确认资源后建立一次
-共享缓存。第一次不要立刻连锁提交全部20个求解任务：
+第一次建立共享缓存时不要立刻连锁提交全部20个求解任务：
 
 ```bash
 mkdir -p slurm-logs
@@ -77,7 +75,8 @@ pilot 完成后运行 `seff ${pilot_job}_8`。两次 MaxRSS 都有安全余量�
 scout；task 8 会识别已有 CSV 并直接复用：
 
 ```bash
-array_job=$(sbatch --parsable --array=0-19%4 slurm/fast_ed_sector_array.sbatch)
+array_job=$(sbatch --parsable --cpus-per-task=8 --array=0-19%4 \
+  slurm/fast_ed_sector_array.sbatch)
 array_job=${array_job%%;*}
 ```
 
@@ -97,7 +96,8 @@ collect_job=${collect_job%%;*}
 实际计算中心左右共五点。`%4` 把同时运行的任务限制为四个，避免20个进程同时
 读取几十 GB 的共享缓存。
 
-收集任务会在 run 根目录生成：
+收集任务会在 solver 结果目录
+`output/fast_ed/runs/<run-name>/nmN_<cache-id>/kK_<settings-id>/` 生成：
 
 - `scan_summary.csv`：五个 mu 的 q、factor、DeltaS、DeltaO；
 - `best_summary.csv`：当前 q 最低的一行，是画 N=5,6,7 FSS 图需要的 N=7 输入；
@@ -107,6 +107,34 @@ collect_job=${collect_job%%;*}
 
 把这五个小文件和 prepare/sector 作业的 `seff` 输出交回来即可；不需要传递
 20--30 GB 的 JLD2 矩阵缓存。N=5、6 的基线结果已经在本地。
+
+### N=7 精细 mu 扫描
+
+首次五点 scout 的最低采样点为 `mu=0.14625732779985`、`q=0.0793799`，但
+步长 `0.005` 对 DeltaS 太粗。中心三点的二次估计把最低点放在约
+`mu=0.1451--0.1453`。独立 profile
+`config/fast_ed/n7_retained_k20_refine.toml` 因此固定原 Hamiltonian，只计算
+`0.14450:0.00025:0.14600` 的七个 mu。它复用已有 25 GB cache：
+
+```bash
+refine_job=$(sbatch --parsable --cpus-per-task=8 --array=0-27%4 \
+  --export=ALL,CONFIG=config/fast_ed/n7_retained_k20_refine.toml \
+  slurm/fast_ed_sector_array.sbatch)
+refine_job=${refine_job%%;*}
+```
+
+确认28个 array task 全部成功后收集：
+
+```bash
+collect_job=$(sbatch --parsable \
+  --export=ALL,CONFIG=config/fast_ed/n7_retained_k20_refine.toml \
+  slurm/fast_ed_collect.sbatch)
+collect_job=${collect_job%%;*}
+```
+
+交接文件位于上述 solver 结果目录，而不是 `<run-name>` 的直接下一级。可以用
+`find output/fast_ed/runs/n7_retained_refine -name collection_manifest.toml` 定位。
+先根据精扫结果确定最佳 mu，再把 k=30 profile 的两个 mu 值改成该点做收敛检查。
 
 `k=20` 结果完成后，用相同缓存做 `k=30` 检查：
 
@@ -127,7 +155,7 @@ relation 所需能级都存在，并且 `k=20` 与 `k=30` 的相关能级、`q`�
 - 分 sector 与合并结果：`output/fast_ed/runs/<run-name>/.../`
 - 每个 `mu` 的最终文件：`merged_spectrum.csv`、`score_summary.csv`、
   `score_relations.csv`
-- run 根目录的画图交接文件：`scan_summary.csv`、`best_summary.csv`、
+- solver 结果目录的画图交接文件：`scan_summary.csv`、`best_summary.csv`、
   `best_relations.csv`、`best_spectrum.csv`、`collection_manifest.toml`
 
 目前没有更改 FuzzifiED 底层。如果以后 profiling 证明需要改 JLL/Fortran 的

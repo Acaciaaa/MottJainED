@@ -91,3 +91,18 @@ using .FastED
         end
     end
 end
+
+@testset "N=7 fine-scan profile" begin
+    config_root = joinpath(@__DIR__, "..", "config", "fast_ed")
+    scout = FastED.load_spec(joinpath(config_root, "n7_retained_k20.toml"))
+    refine = FastED.load_spec(joinpath(config_root, "n7_retained_k20_refine.toml"))
+
+    @test refine.nm1 == 7
+    @test refine.solver.k == 20
+    @test refine.cache_id == scout.cache_id
+    @test refine.run_name == "n7_retained_refine"
+    @test length(refine.mus) == 7
+    @test first(refine.mus) == 0.14450
+    @test last(refine.mus) == 0.14600
+    @test all(isapprox.(diff(refine.mus), 0.00025; atol=1.0e-14, rtol=0.0))
+end
