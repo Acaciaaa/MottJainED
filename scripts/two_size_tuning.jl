@@ -397,6 +397,11 @@ function main(args=ARGS)
                 u0_over_uf=settings.u0_over_uf,
             )
         end
+        if option_bool(options, "audit", false)
+            audit_script = joinpath(PROJECT_ROOT, "scripts", "audit_fss_csv.jl")
+            result_path = joinpath(output, "search", "fss_optimize_results.csv")
+            run(`$(Base.julia_cmd()) --startup-file=no --project=$PROJECT_ROOT $audit_script --config=$profile_path --source=$result_path`)
+        end
         matching, crossings = analyze_results(output, settings)
         println("Two-size matching rows: $(nrow(matching))")
         println("Sign-change estimates: $(nrow(crossings))")

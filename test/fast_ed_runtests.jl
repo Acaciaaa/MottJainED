@@ -121,22 +121,33 @@ end
     @test all(isapprox.(diff(refine.mus), 0.00025; atol=1.0e-14, rtol=0.0))
 end
 
-@testset "Sequential local-FSS profiles" begin
-    profile_root = joinpath(@__DIR__, "..", "config", "fss_profiles")
+@testset "Stage-12 guided local-FSS profiles" begin
+    profile_root = joinpath(@__DIR__, "..", "config", "two_size_tuning")
+    reference = TOML.parsefile(joinpath(profile_root, "s_stage12_vf_retained.toml"))
+    search_keys = filter(key -> startswith(key, "optimize_") || startswith(key, "mu_") ||
+        startswith(key, "score_") || key == "k", keys(reference["two_size_tuning"]))
+    hamiltonian_points = Set{Tuple}()
     cases = (
         ("n56_retained_local_uf0.toml", "Uf0", [1.65, 1.834, 2.00]),
-        ("n56_retained_local_vf0.toml", "Vf0", [0.45, 0.55, 0.65]),
+        ("n56_retained_local_vf0.toml", "Vf0", [0.45, 0.65]),
     )
     for (name, parameter, values) in cases
         config = TOML.parsefile(joinpath(profile_root, name))
-        @test config["model"]["nm_values"] == [5, 6]
-        @test config["fss"]["scan_parameter"] == parameter
-        @test config["fss"]["scan_values"] == values
-        @test config["fss"]["score_metric"] == "q"
-        @test config["fss"]["optimize_anchor_nm"] == 5
-        @test config["fss"]["optimize_wide_audit_all"]
-        @test config["hamiltonian"]["Uf0"] == 1.834
-        @test config["hamiltonian"]["Vf0"] == 0.55
-        @test config["hamiltonian"]["V0"] == 0.34
+        tuning = config["two_size_tuning"]
+        @test tuning["guide_nm_values"] == [3, 4]
+        @test tuning["match_nm_values"] == [5, 6]
+        @test tuning["scan_parameter"] == parameter
+        @test tuning["scan_values"] == values
+        @test config["hamiltonian"] == reference["hamiltonian"]
+        for key in search_keys
+            @test tuning[key] == reference["two_size_tuning"][key]
+        end
+        for value in values
+            point = parameter == "Uf0" ? (value, 0.55) : (1.834, value)
+            @test !(point in hamiltonian_points)
+            push!(hamiltonian_points, point)
+        end
     end
+    @test length(hamiltonian_points) == 5
+    @test (1.834, 0.55) in hamiltonian_points
 end

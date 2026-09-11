@@ -33,8 +33,17 @@ config = TOML.parsefile(project_path(options["config"]))
 source = project_path(options["source"])
 isfile(source) || throw(ArgumentError("FSS results not found: $source"))
 
-expected_sizes = Int.(config["model"]["nm_values"])
-fss = config["fss"]
+if haskey(config, "two_size_tuning")
+    fss = config["two_size_tuning"]
+    guide_sizes = Int.(fss["guide_nm_values"])
+    match_sizes = Int.(fss["match_nm_values"])
+    expected_sizes = sort(unique(vcat(guide_sizes, match_sizes)))
+else
+    fss = config["fss"]
+    guide_sizes = Int[]
+    match_sizes = Int.(config["model"]["nm_values"])
+    expected_sizes = match_sizes
+end
 expected_values = Float64.(fss["scan_values"])
 parameter = String(fss["scan_parameter"])
 data = CSV.read(source, DataFrame)
@@ -46,6 +55,11 @@ required_columns = (
 )
 for name in required_columns
     name in names(data) || error("Missing required FSS column '$name' in $source")
+end
+if !isempty(guide_sizes)
+    for name in ("search_mode", "center_muc")
+        name in names(data) || error("Missing required FSS column '$name' in $source")
+    end
 end
 
 # A restarted job can append a newer row with the same identity. Audit only the last row.
@@ -71,6 +85,25 @@ for nm1 in expected_sizes, value in expected_values
     Bool(row.at_boundary) && push!(issues, "N=$nm1 $parameter=$value best μ is on a boundary")
     all(isfinite, Float64[row.muc, row.q, row.factor, row.delta_s, row.delta_o]) ||
         push!(issues, "N=$nm1 $parameter=$value has a non-finite result")
+    if !isempty(guide_sizes)
+        expected_mode = nm1 in guide_sizes ? "anchor" : "continuation"
+        String(row.search_mode) == expected_mode || push!(
+            issues, "N=$nm1 $parameter=$value expected $expected_mode search, got $(row.search_mode)",
+        )
+        if nm1 in match_sizes
+            predecessor = maximum(filter(size -> size < nm1, expected_sizes))
+            seeds = filter(seed ->
+                Int(seed.nm1) == predecessor &&
+                String(seed.scan_parameter) == parameter &&
+                Float64(seed.scan_value) == value, latest,
+            )
+            if nrow(seeds) != 1 || !isapprox(
+                Float64(row.center_muc), Float64(seeds[1, :muc]); atol=1e-12, rtol=0.0,
+            )
+                push!(issues, "N=$nm1 $parameter=$value did not continue from N=$predecessor muc")
+            end
+        end
+    end
     if nm1 == maximum(expected_sizes)
         Bool(row.wide_brent_ran) || push!(issues, "N=$nm1 $parameter=$value wide audit did not run")
         Bool(row.wide_disagreement) && push!(

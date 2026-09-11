@@ -134,44 +134,49 @@ collect_job=${collect_job%%;*}
 
 交接文件位于上述 solver 结果目录，而不是 `<run-name>` 的直接下一级。可以用
 `find output/fast_ed/runs/n7_retained_refine -name collection_manifest.toml` 定位。
-先根据精扫结果确定最佳 mu，再把 k=30 profile 的两个 mu 值改成该点做收敛检查。
-
-`k=20` 结果完成后，用相同缓存做 `k=30` 检查：
-
-```bash
-sbatch --array=0-3%4 \
-  --export=ALL,CONFIG=config/fast_ed/n7_retained_k30.toml \
-  slurm/fast_ed_sector_array.sbatch
-```
-
-两套 profile 的矩阵 cache ID 相同，结果目录按 solver ID 分开。只有五条 CFT
-relation 所需能级都存在，并且 `k=20` 与 `k=30` 的相关能级、`q`、`DeltaS`、
-`DeltaO` 一致时，才可以信任较小的 `k`。如果需要增加 `mu`，只编辑 `mus=[...]`
+2026-09-11 已完成精扫：实际最佳点为 `mu=0.14475`，当前五条 relation 所需最大
+sector rank 仅为 9，因此当前 N=7 FSS 使用 `k=20`，不提交额外 `k=30` 检查。
+如果需要增加 `mu`，只编辑 `mus=[...]`
 并把 array 范围设为 `0:(4*mu点数-1)%4`；已有 `mu`/sector 会自动复用。
 
-## Uf0/Vf0 局部 FSS：低存储串行流程
+## Uf0/Vf0 局部 FSS：恢复 stage12 引导搜索，N=7 逐点串行
 
 这组 FSS 只使用可信的 N=5、6、7，并分别做两条一维扫描：
 
 - `Uf0 = [1.65, 1.834, 2.00]`，固定 `Vf0=0.55`；
 - `Vf0 = [0.45, 0.55, 0.65]`，固定 `Uf0=1.834`。
 
-其余参数保持 retained point。第一阶段只计算 N=5、6，并让 Uf0 整组完成且通过
-local/wide μ 搜索审计后才开始 Vf0：
+其余参数保持 retained point。2026-09-11 用户要求恢复之前 stage 的正确、高效做法：
+撤回 `205fbff` 中 N=5 直接承担 41 点宽网格及两组串行的配置。第一阶段直接运行
+`scripts/two_size_tuning.jl`，搜索设置与 stage12 一致：N=3、4 宽网格及谷底精修，
+N=5 从同参数 N=4 muc 续接，N=6 从 N=5 续接；局部窗口半宽 0.02、9 点、边界扩窗，
+N=5 保留宽 Brent 对照，N=6 每点宽审计，`k=30` 和五项 q score 不变。
+小尺寸只引导 muc，不进入 matching 或最终 FSS。
+
+Uf0 三个点与 Vf0 两个端点作为两个独立 Slurm array task，各用 8 CPU/线程。
+中心 `(Uf0,Vf0)=(1.834,0.55)` 只在 Uf0 任务计算一次，随后给两条曲线共用。
+合计 5 个唯一 Hamiltonian 点、10 行 N=5/6 结果；含 guide 时为 20 行。
+
+从正确实验工作树提交（旧作业 547102 需由用户取消；保留其旧输出）：
 
 ```bash
-sbatch slurm/fss_retained_local_n56_serial.sbatch
+mkdir -p slurm-logs
+sbatch slurm/fss_retained_local_n56.sbatch
 ```
 
-结果固定写到：
+首次运行的结果目录为（相同配置重提会续用同一目录，已完成参数/尺寸自动跳过）：
 
 ```text
-output/fast_ed/fss_n56_uf0/fss/
-output/fast_ed/fss_n56_vf0/fss/
+output/two_size_tuning/n56_retained_local_uf0_01/
+output/two_size_tuning/n56_retained_local_vf0_01/
 ```
 
-应先检查两份 `fss_optimize_results.csv` 和 `fss_optimize_evaluations.csv`。它们确定
-四个新 N=7 Hamiltonian 点各自的 μ 搜索窗口；不要预先为所有点建立 N=7 缓存。
+每个任务计算后自动审计 `search/fss_optimize_results.csv`：Uf0 共 12 行，Vf0 共 8 行，
+检查完整性、收敛、边界、有限结果、N=6 local/wide 一致性，并验证 N=5/6 确实使用
+同参数的前一尺寸 muc 作为 continuation seed。审计失败以非零状态结束，保留输出。
+下载两个完整小目录，检查 `two_size_matching.csv`、`search/fss_optimize_results.csv`
+及 `search/fss_optimize_evaluations.csv` 后，才安排第一个新 N=7 点。
+旧 `output/fast_ed/fss_n56_*` 的部分结果保留，但不会混入新流程。
 
 N=7 阶段每次只处理一个新参数点。同一参数点收集后，可先运行只读审计：
 
