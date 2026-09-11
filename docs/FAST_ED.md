@@ -1,0 +1,145 @@
+# 独立的 N=7 ED 实验层
+
+这套代码只存在于 `MottJainED-fast-ed` 工作树中。它没有修改
+`FuzzifiED.jl`，也没有替换 `MottJainED` 原有的 `prepare_spectrum`、
+`solve_spectrum` 或 FSS/optimization 工作流。
+
+## 它解决什么问题
+
+原流程会在一个进程中同时保留四个 `(Z,R)` sector，并串行求解。新流程把工作
+拆成三步：
+
+1. 固定非 `mu` 的 Hamiltonian 参数，逐 sector 构造 `H0`、`Nf`、`L2`、`C2`，
+   每完成一个便原子写入独立 JLD2 文件并释放内存。
+2. 每个 `(mu, sector)` 由一个独立进程加载和求解。四个 sector 可以作为 Slurm
+   array 并行；中断后只需重跑缺失任务。
+3. 四个 CSV 全部存在且身份一致后才合并，并调用原来的 `cft_score` 计算 `q`、
+   `DeltaS`、`DeltaO` 和五条 relation residual。
+
+因此它主要降低 N=7 峰值内存、把单点四个 sector 的 wall time 变成可并行任务，
+并让不同 `mu` 或 `k` 复用矩阵。它不会改变底层稀疏本征值算法，所以单个 sector
+自身仍然是昂贵计算。
+
+缓存 ID 包含非 `mu` 参数、矩阵相关的 MottJainED 源码哈希、FuzzifiED 版本与
+源码哈希。配置或源码不一致时不会误用旧矩阵。所有结果采用临时文件加原子改名，
+避免中断留下伪装成完整结果的半个文件。
+
+## 先做本地验证
+
+```bash
+julia --project=. scripts/fast_ed.jl prepare \
+  --config=config/fast_ed/n5_retained_validation.toml
+
+for sector in 1 2 3 4; do
+  julia --project=. scripts/fast_ed.jl solve \
+    --config=config/fast_ed/n5_retained_validation.toml \
+    --mu-index=1 --sector-index="$sector"
+done
+
+julia --project=. scripts/fast_ed.jl collect \
+  --config=config/fast_ed/n5_retained_validation.toml
+
+julia --project=. scripts/fast_ed.jl compare \
+  --config=config/fast_ed/n5_retained_validation.toml --mu-index=1
+```
+
+`compare` 只允许 N<=6，防止为了验证而意外重复一次昂贵的 N=7 计算。
+把上面 profile 换成 `config/fast_ed/n6_retained_validation.toml` 可做同样的
+N=6 检查。
+
+## N=7 建议顺序
+
+实测 N=6 缓存为 754 MB。按 N=6 到 N=7 的 Hilbert-space 和稀疏度增长粗估，
+N=7 四个文件合计可能约 20--30 GB；这不是精确上限，建议至少留 40 GB 可用
+工作盘。
+
+N=7 第一次运行尚无真实 MaxRSS。模板因此先申请 16 CPU，但 `THREADS=8`：计算
+仍采用 N=6 实测较快的 8 线程，额外 CPU 主要利用 `sdicnormal` 默认约
+7824 MB/CPU 的规则，把每个任务的内存额度提高到约 122 GB。跑完后必须用
+`seff JOBID` 检查 MaxRSS；确认余量后才考虑降回 8 CPU。确认资源后建立一次
+共享缓存。第一次不要立刻连锁提交全部20个求解任务：
+
+```bash
+mkdir -p slurm-logs
+cache_job=$(sbatch --parsable slurm/fast_ed_prepare.sbatch)
+cache_job=${cache_job%%;*}
+```
+
+缓存完成后先运行 `seff $cache_job`。然后只提交 task 8；它对应中心 mu 的
+`(+,+)` sector，也是 N=6 中维数最大的 sector：
+
+```bash
+pilot_job=$(sbatch --parsable --array=8 slurm/fast_ed_sector_array.sbatch)
+pilot_job=${pilot_job%%;*}
+```
+
+pilot 完成后运行 `seff ${pilot_job}_8`。两次 MaxRSS 都有安全余量后，再提交完整
+scout；task 8 会识别已有 CSV 并直接复用：
+
+```bash
+array_job=$(sbatch --parsable --array=0-19%4 slurm/fast_ed_sector_array.sbatch)
+array_job=${array_job%%;*}
+```
+
+确认 array 全部成功（失败的 index 重提后）再提交收集，避免原 array 中一次失败
+使 `afterok` 永久阻塞：
+
+```bash
+collect_job=$(sbatch --parsable slurm/fast_ed_collect.sbatch)
+collect_job=${collect_job%%;*}
+```
+
+如果 cache 或 pilot 因内存失败，可以用 `--cpus-per-task=20` 重提同一命令；
+计算线程仍保持8，已完成的 sector cache/result 会自动复用。
+
+默认 profile 是 `config/fast_ed/n7_retained_k20.toml`。中心
+`mu=0.14625732779985` 是从已审计的 N=5、N=6 临界点做的一步线性外推；scout
+实际计算中心左右共五点。`%4` 把同时运行的任务限制为四个，避免20个进程同时
+读取几十 GB 的共享缓存。
+
+收集任务会在 run 根目录生成：
+
+- `scan_summary.csv`：五个 mu 的 q、factor、DeltaS、DeltaO；
+- `best_summary.csv`：当前 q 最低的一行，是画 N=5,6,7 FSS 图需要的 N=7 输入；
+- `best_relations.csv`：最佳点的五条 CFT relation；
+- `best_spectrum.csv`：最佳点的完整低能态表；
+- `collection_manifest.toml`：完整性、最佳 mu 和 cache/solver 身份。
+
+把这五个小文件和 prepare/sector 作业的 `seff` 输出交回来即可；不需要传递
+20--30 GB 的 JLD2 矩阵缓存。N=5、6 的基线结果已经在本地。
+
+`k=20` 结果完成后，用相同缓存做 `k=30` 检查：
+
+```bash
+sbatch --array=0-3%4 \
+  --export=ALL,CONFIG=config/fast_ed/n7_retained_k30.toml \
+  slurm/fast_ed_sector_array.sbatch
+```
+
+两套 profile 的矩阵 cache ID 相同，结果目录按 solver ID 分开。只有五条 CFT
+relation 所需能级都存在，并且 `k=20` 与 `k=30` 的相关能级、`q`、`DeltaS`、
+`DeltaO` 一致时，才可以信任较小的 `k`。如果需要增加 `mu`，只编辑 `mus=[...]`
+并把 array 范围设为 `0:(4*mu点数-1)%4`；已有 `mu`/sector 会自动复用。
+
+## 目录
+
+- 矩阵缓存：`output/fast_ed/cache/nmN_<cache-id>/`
+- 分 sector 与合并结果：`output/fast_ed/runs/<run-name>/.../`
+- 每个 `mu` 的最终文件：`merged_spectrum.csv`、`score_summary.csv`、
+  `score_relations.csv`
+- run 根目录的画图交接文件：`scan_summary.csv`、`best_summary.csv`、
+  `best_relations.csv`、`best_spectrum.csv`、`collection_manifest.toml`
+
+目前没有更改 FuzzifiED 底层。如果以后 profiling 证明需要改 JLL/Fortran 的
+稀疏矩阵乘法或 eigensolver 接口，必须另建 FuzzifiED fork/构建目录并先取得许可。
+
+## 已完成的本地等价性检查
+
+- N=5、k=20：80 态键完全相同，最大能量误差 `3.24e-14`，最大 L2/C2
+  误差 `1.38e-11` / `1.54e-12`。
+- N=6、k=20：80 态键完全相同，最大能量误差 `9.68e-14`，最大 L2/C2
+  误差 `1.47e-11` / `8.52e-13`。
+- 两个尺寸的 `q`、`DeltaS`、`DeltaO` 与旧路径差异都在约 `1e-13`。
+- N=6 单个最大 sector 用 8 线程约 5.4 秒；旧路径四 sector 串行求解约
+  21.4 秒。这说明四个各占 8 核的 Slurm 任务有接近四路 wall-time 并行的空间。
+  不要在只有 8 核的本机同时跑四个 8 核进程。

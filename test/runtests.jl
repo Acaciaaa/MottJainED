@@ -731,3 +731,5 @@ end
         model, couplings, [:U0], settings; u0_over_uf=9.0,
     )
 end
+
+include("fast_ed_runtests.jl")

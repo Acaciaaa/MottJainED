@@ -1,0 +1,33 @@
+# N=6 validation profile at the retained, audited muc.
+
+[model]
+nm1 = 6
+
+[hamiltonian]
+Uf = 0.46
+Uf0 = 1.834
+U0 = 4.14
+Vf = 0.0
+Vf0 = 0.55
+V0 = 0.34
+t = 0.5
+mu = 0.1435201189514
+
+[solver]
+k = 20
+eig_tol = 1.0e-8
+energy_tol = 1.0e-7
+quantum_tol = 2.0e-3
+degeneracy_tol = 2.0e-6
+dense_cutoff = 128
+ncv_extra = 12
+warm_start = false
+
+[fast_ed]
+run_name = "n6_retained_validation"
+cache_root = "output/fast_ed/cache"
+result_root = "output/fast_ed/runs"
+k = 20
+mus = [0.1435201189514]
+score_terms = ["ds_s", "j", "curlj", "dj_rank1", "t_rank1"]
+score_metric = "q"

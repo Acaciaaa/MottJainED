@@ -1,0 +1,35 @@
+# k=30 convergence check for the same N=7 cache.
+# Do not submit this profile until the k=20 scan_summary.csv has been inspected.
+# If its best point is not 0.14625732779985, replace both mu values below first.
+
+[model]
+nm1 = 7
+
+[hamiltonian]
+Uf = 0.46
+Uf0 = 1.834
+U0 = 4.14
+Vf = 0.0
+Vf0 = 0.55
+V0 = 0.34
+t = 0.5
+mu = 0.14625732779985
+
+[solver]
+k = 30
+eig_tol = 1.0e-8
+energy_tol = 1.0e-7
+quantum_tol = 2.0e-3
+degeneracy_tol = 2.0e-6
+dense_cutoff = 128
+ncv_extra = 12
+warm_start = false
+
+[fast_ed]
+run_name = "n7_retained_k30_check"
+cache_root = "output/fast_ed/cache"
+result_root = "output/fast_ed/runs"
+k = 30
+mus = [0.14625732779985]
+score_terms = ["ds_s", "j", "curlj", "dj_rank1", "t_rank1"]
+score_metric = "q"
