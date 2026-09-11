@@ -35,6 +35,8 @@ Usage:
   julia --project=. scripts/fast_ed.jl prepare --config=PROFILE.toml [--force]
   julia --project=. scripts/fast_ed.jl solve --config=PROFILE.toml --mu-index=N --sector-index=N [--force]
   julia --project=. scripts/fast_ed.jl collect --config=PROFILE.toml [--mu-index=N] [--allow-incomplete]
+  julia --project=. scripts/fast_ed.jl audit --config=PROFILE.toml [--require-interior]
+  julia --project=. scripts/fast_ed.jl release-cache --config=PROFILE.toml --confirm-release [--require-interior]
   julia --project=. scripts/fast_ed.jl compare --config=PROFILE.toml --mu-index=N
 
 Sector index order: 1=(+,+), 2=(+,-), 3=(-,+), 4=(-,-).
@@ -72,6 +74,21 @@ elseif command == "collect"
         println("collected $(length(result.rows)) / $(length(spec.mus)) mu points")
         isempty(result.failures) || foreach(message -> println(stderr, message), result.failures)
     end
+elseif command == "audit"
+    result = validate_collection(
+        spec; require_interior=option_bool(options, "require-interior"),
+    )
+    println("collection complete: $(result.result_directory)")
+    println("best mu: $(result.best_mu)")
+elseif command == "release-cache"
+    option_bool(options, "confirm-release") || throw(ArgumentError(
+        "release-cache requires --confirm-release",
+    ))
+    result = release_cache(
+        spec; require_interior=option_bool(options, "require-interior"),
+    )
+    println("released cache $(result.cache_id): $(result.bytes) bytes")
+    println("results retained: $(result.result_directory)")
 elseif command == "compare"
     result = compare_direct(spec, required_int(options, "mu-index"))
     println(result)

@@ -149,6 +149,49 @@ relation 所需能级都存在，并且 `k=20` 与 `k=30` 的相关能级、`q`�
 `DeltaO` 一致时，才可以信任较小的 `k`。如果需要增加 `mu`，只编辑 `mus=[...]`
 并把 array 范围设为 `0:(4*mu点数-1)%4`；已有 `mu`/sector 会自动复用。
 
+## Uf0/Vf0 局部 FSS：低存储串行流程
+
+这组 FSS 只使用可信的 N=5、6、7，并分别做两条一维扫描：
+
+- `Uf0 = [1.65, 1.834, 2.00]`，固定 `Vf0=0.55`；
+- `Vf0 = [0.45, 0.55, 0.65]`，固定 `Uf0=1.834`。
+
+其余参数保持 retained point。第一阶段只计算 N=5、6，并让 Uf0 整组完成且通过
+local/wide μ 搜索审计后才开始 Vf0：
+
+```bash
+sbatch slurm/fss_retained_local_n56_serial.sbatch
+```
+
+结果固定写到：
+
+```text
+output/fast_ed/fss_n56_uf0/fss/
+output/fast_ed/fss_n56_vf0/fss/
+```
+
+应先检查两份 `fss_optimize_results.csv` 和 `fss_optimize_evaluations.csv`。它们确定
+四个新 N=7 Hamiltonian 点各自的 μ 搜索窗口；不要预先为所有点建立 N=7 缓存。
+
+N=7 阶段每次只处理一个新参数点。同一参数点收集后，可先运行只读审计：
+
+```bash
+julia --project=. scripts/fast_ed.jl audit \
+  --config=POINT.toml --require-interior
+```
+
+确认小型 CSV/TOML 结果已经保存在 run 目录后，只有显式设置
+`fast_ed.allow_cache_release=true` 的临时参数点 profile 才允许释放自己的缓存：
+
+```bash
+julia --project=. scripts/fast_ed.jl release-cache \
+  --config=POINT.toml --require-interior --confirm-release
+```
+
+该命令再次验证 collection 完整、best μ 不在扫描边界、cache/result 身份一致，且
+只删除 profile 精确指向的 `nmN_<cache-id>` 目录。retained 中心 profile 没有删除
+许可，因此不会被这个串行清理流程误删。若审计失败，缓存保留，后续点不应开始。
+
 ## 目录
 
 - 矩阵缓存：`output/fast_ed/cache/nmN_<cache-id>/`

@@ -618,6 +618,112 @@ function collect_all(spec; allow_incomplete::Bool=false)
     return (rows=rows, failures=failures)
 end
 
+"""Validate that every requested μ was collected before a cache may be released."""
+function validate_collection(spec; require_interior::Bool=false)
+    manifest_path = joinpath(spec.result_directory, "collection_manifest.toml")
+    isfile(manifest_path) || throw(ArgumentError(
+        "Collection manifest not found: $manifest_path",
+    ))
+    manifest = TOML.parsefile(manifest_path)
+    Bool(get(manifest, "complete", false)) || throw(ArgumentError(
+        "Collection is incomplete; keep the cache and finish the missing sector results",
+    ))
+    Bool(get(manifest, "best_found", false)) || throw(ArgumentError(
+        "Collection has no valid best μ; keep the cache for diagnosis",
+    ))
+    String(get(manifest, "cache_id", "")) == spec.cache_id || throw(ArgumentError(
+        "Collection cache identity does not match this configuration",
+    ))
+    String(get(manifest, "settings_id", "")) == spec.settings_id || throw(ArgumentError(
+        "Collection solver identity does not match this configuration",
+    ))
+    Int(get(manifest, "requested_mu_count", -1)) == length(spec.mus) ||
+        throw(ArgumentError("Collection requested-μ count does not match the configuration"))
+    Int(get(manifest, "collected_mu_count", -1)) == length(spec.mus) ||
+        throw(ArgumentError("Not every configured μ was collected"))
+
+    required = (
+        "scan_summary.csv", "best_summary.csv", "best_relations.csv", "best_spectrum.csv",
+    )
+    for name in required
+        path = joinpath(spec.result_directory, name)
+        isfile(path) || throw(ArgumentError("Required collected result is missing: $path"))
+    end
+
+    summary = CSV.read(joinpath(spec.result_directory, "scan_summary.csv"), DataFrame)
+    nrow(summary) == length(spec.mus) || throw(ArgumentError(
+        "scan_summary.csv has $(nrow(summary)) rows for $(length(spec.mus)) configured μ values",
+    ))
+    all(Bool.(summary.score_valid)) || throw(ArgumentError(
+        "At least one μ has an invalid CFT score; keep the cache for diagnosis",
+    ))
+    all(isfinite, Float64.(summary.objective)) || throw(ArgumentError(
+        "At least one μ has a non-finite objective; keep the cache for diagnosis",
+    ))
+    Set(Float64.(summary.mu)) == Set(spec.mus) || throw(ArgumentError(
+        "scan_summary.csv μ values do not match the configuration",
+    ))
+
+    best = CSV.read(joinpath(spec.result_directory, "best_summary.csv"), DataFrame)
+    nrow(best) == 1 || throw(ArgumentError("best_summary.csv must contain exactly one row"))
+    best_mu = Float64(best.mu[1])
+    best_mu == Float64(manifest["best_mu"]) || throw(ArgumentError(
+        "best_summary.csv and collection_manifest.toml disagree on best μ",
+    ))
+    best_mu in spec.mus || throw(ArgumentError("Best μ is not part of the configured scan"))
+    if require_interior && length(spec.mus) >= 3
+        ordered = sort(spec.mus)
+        best_mu != first(ordered) && best_mu != last(ordered) || throw(ArgumentError(
+            "Best μ=$best_mu is on the scan boundary; keep the cache and extend the scan",
+        ))
+    end
+    return (
+        manifest=manifest,
+        summary=summary,
+        best=best,
+        best_mu=best_mu,
+        result_directory=spec.result_directory,
+    )
+end
+
+"""
+Delete one exact persistent matrix-cache directory only after collected results pass validation.
+
+Profiles must opt in with `fast_ed.allow_cache_release=true`. This deliberately prevents the
+retained central cache and older profiles from being removed by an accidental command.
+"""
+function release_cache(spec; require_interior::Bool=false)
+    fast = section(spec.config, :fast_ed)
+    Bool(getvalue(fast, :allow_cache_release, false)) || throw(ArgumentError(
+        "This profile does not set fast_ed.allow_cache_release=true; cache release refused",
+    ))
+    validation = validate_collection(spec; require_interior=require_interior)
+    load_cache_manifest(spec)
+
+    cache_root = project_path(String(getvalue(fast, :cache_root, "output/fast_ed/cache")))
+    cache_directory = normpath(spec.cache_directory)
+    expected_name = "nm$(spec.nm1)_$(spec.cache_id)"
+    basename(cache_directory) == expected_name || throw(ArgumentError(
+        "Cache directory name is not the exact expected identity: $cache_directory",
+    ))
+    isdir(cache_root) || throw(ArgumentError("Cache root is missing: $cache_root"))
+    isdir(cache_directory) || throw(ArgumentError("Cache directory is missing: $cache_directory"))
+    islink(cache_directory) && throw(ArgumentError("Refusing to release a symlinked cache"))
+    dirname(realpath(cache_directory)) == realpath(cache_root) || throw(ArgumentError(
+        "Cache directory is not a direct child of the configured cache root",
+    ))
+
+    bytes = sum(filesize(joinpath(root, name)) for (root, _, names) in walkdir(cache_directory)
+                for name in names)
+    rm(cache_directory; recursive=true)
+    return (
+        cache_id=spec.cache_id,
+        bytes=bytes,
+        best_mu=validation.best_mu,
+        result_directory=validation.result_directory,
+    )
+end
+
 """Compare an assembled cached result with the unchanged in-process solver."""
 function compare_direct(spec, mu_index::Integer)
     spec.nm1 <= 6 || throw(ArgumentError(
@@ -708,6 +814,7 @@ end
 
 export CACHE_SCHEMA_VERSION, RESULT_SCHEMA_VERSION, SECTOR_ORDER,
        load_spec, prepare_caches, load_cache_manifest, solve_sector,
-       collect_mu, collect_all, compare_direct, plan, sector_result_path
+       collect_mu, collect_all, validate_collection, release_cache,
+       compare_direct, plan, sector_result_path
 
 end

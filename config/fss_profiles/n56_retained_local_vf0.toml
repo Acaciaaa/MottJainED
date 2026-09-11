@@ -1,0 +1,44 @@
+# First stage of the serial N=5,6,7 FSS campaign.
+# Only Vf0 varies; every other Hamiltonian coupling stays at the retained point.
+
+[model]
+nm_values = [5, 6]
+
+[hamiltonian]
+Uf = 0.46
+Uf0 = 1.834
+U0 = 4.14
+Vf = 0.0
+Vf0 = 0.55
+V0 = 0.34
+t = 0.5
+mu = 0.1435201189514
+
+[fss]
+methods = ["optimize"]
+k = 30
+score_terms = ["ds_s", "j", "curlj", "dj_rank1", "t_rank1"]
+score_metric = "q"
+scan_parameter = "Vf0"
+scan_values = [0.45, 0.55, 0.65]
+mu_min = -0.095
+mu_max = 0.305
+mu_count = 41
+optimize_strategy = "size_continuation"
+optimize_anchor_nm = 5
+optimize_local_half_width = 0.02
+optimize_local_count = 9
+optimize_max_expansions = 3
+optimize_abs_tol = 2.0e-5
+optimize_max_iterations = 100
+optimize_wide_mode = "adaptive"
+optimize_wide_adaptive_nm = 6
+optimize_wide_audit_first = false
+optimize_wide_audit_all = true
+optimize_wide_jump_tol = 0.03
+optimize_wide_mu_tol = 5.0e-3
+optimize_wide_objective_tol = 1.0e-4
+
+[output]
+root = "output/fast_ed/fss_n56_vf0"
+run_name = ""

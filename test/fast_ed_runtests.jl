@@ -89,6 +89,20 @@ using .FastED
             @test collection["complete"]
             @test collection["best_mu"] == 0.03
         end
+        validation = FastED.validate_collection(spec)
+        @test validation.best_mu == 0.03
+        @test_throws ArgumentError FastED.release_cache(spec)
+
+        config["fast_ed"]["allow_cache_release"] = true
+        open(config_path, "w") do io
+            TOML.print(io, config; sorted=true)
+        end
+        releasable = FastED.load_spec(config_path)
+        released = FastED.release_cache(releasable)
+        @test released.cache_id == spec.cache_id
+        @test released.bytes > 0
+        @test !isdir(spec.cache_directory)
+        @test isfile(joinpath(spec.result_directory, "best_summary.csv"))
     end
 end
 
@@ -105,4 +119,24 @@ end
     @test first(refine.mus) == 0.14450
     @test last(refine.mus) == 0.14600
     @test all(isapprox.(diff(refine.mus), 0.00025; atol=1.0e-14, rtol=0.0))
+end
+
+@testset "Sequential local-FSS profiles" begin
+    profile_root = joinpath(@__DIR__, "..", "config", "fss_profiles")
+    cases = (
+        ("n56_retained_local_uf0.toml", "Uf0", [1.65, 1.834, 2.00]),
+        ("n56_retained_local_vf0.toml", "Vf0", [0.45, 0.55, 0.65]),
+    )
+    for (name, parameter, values) in cases
+        config = TOML.parsefile(joinpath(profile_root, name))
+        @test config["model"]["nm_values"] == [5, 6]
+        @test config["fss"]["scan_parameter"] == parameter
+        @test config["fss"]["scan_values"] == values
+        @test config["fss"]["score_metric"] == "q"
+        @test config["fss"]["optimize_anchor_nm"] == 5
+        @test config["fss"]["optimize_wide_audit_all"]
+        @test config["hamiltonian"]["Uf0"] == 1.834
+        @test config["hamiltonian"]["Vf0"] == 0.55
+        @test config["hamiltonian"]["V0"] == 0.34
+    end
 end
