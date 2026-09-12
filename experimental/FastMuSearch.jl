@@ -1,9 +1,8 @@
 module FastMuSearch
 
-using CSV, DataFrames, Dates, Distributed, LinearAlgebra, MottJainED, TOML
+using CSV, DataFrames, Dates, LinearAlgebra, MottJainED, TOML
 using ..FastED
 
-const RESIDENT = Ref{Any}(nothing)
 const ROOT = FastED.PROJECT_ROOT
 
 function options(spec)
@@ -123,36 +122,28 @@ function search_mu(score_at, opt; on_evaluation=(mu, score, source)->nothing)
             neighbor_converged=neighbor_converged, intervals=intervals)
 end
 
-function initialize_worker(config_path, index)
-    BLAS.set_num_threads(1)
-    FastED.FuzzifiED.NumThreads = Threads.nthreads()
-    spec = FastED.load_spec(config_path)
-    spec.solver.warm_start && error("This audited search requires cold eigensolver starts")
-    RESIDENT[] = (spec=spec, index=index, loaded=FastED.load_sector_solver(spec, index))
-    GC.gc()
-    return (cache_id=spec.cache_id, settings_id=spec.settings_id,
-            dimension=RESIDENT[].loaded.dimension, threads=Threads.nthreads())
-end
+"""Solve one sector at a time in this process, reusing disk cache and complete CSVs.
 
-function worker_solve(mu, force=false)
-    state = RESIDENT[]
-    state === nothing && error("Sector worker was not initialized")
-    path = FastED.solve_sector(state.spec, Float64(mu), state.index;
-                              force=force, resident=state.loaded)
-    GC.gc()
-    return path
-end
-
-function evaluate_parallel(spec, pids, mu; force=false)
-    tasks = [remotecall(worker_solve, pid, Float64(mu), force) for pid in pids]
-    foreach(fetch, tasks)
+The large matrices/vectors from a completed solve are released before loading the
+next sector. No extra worker or idle CPU allocation is held for another sector.
+"""
+function evaluate_serial(spec, count, mu; force=false)
+    for index in 1:count
+        started = time()
+        @info "Sequential sector" mu index total=count threads=Threads.nthreads()
+        try
+            FastED.solve_sector(spec, Float64(mu), index; force=force)
+        finally
+            GC.gc()
+        end
+        @info "Sector finished" mu index elapsed_seconds=time()-started
+    end
     return FastED.collect_mu(spec, Float64(mu))
 end
 
-function run(spec; threads_per_worker=8)
+function run(spec)
     opt = options(spec)
     spec.solver.warm_start && error("Set solver.warm_start=false for independent eigensolver starts")
-    threads_per_worker >= 1 || error("threads_per_worker must be positive")
     BLAS.set_num_threads(1)
     FastED.FuzzifiED.NumThreads = Threads.nthreads()
     manifest = FastED.prepare_caches(spec)
@@ -167,7 +158,8 @@ function run(spec; threads_per_worker=8)
         "cache_id" => spec.cache_id, "settings_id" => spec.settings_id,
         "project_git_revision" => spec.identity["project_git_revision"],
         "julia_version" => string(VERSION), "sector_count" => count,
-        "threads_per_worker" => threads_per_worker,
+        "execution_mode" => "serial_sectors", "solver_processes" => 1,
+        "julia_threads" => Threads.nthreads(),
         "started_at" => string(now()), "search_options" => spec.config["mu_search"],
         "search_source_hash" => FastED.files_digest([
             @__FILE__, joinpath(ROOT, "experimental", "FastED.jl"),
@@ -176,31 +168,17 @@ function run(spec; threads_per_worker=8)
     )
     MottJainED.atomic_toml(audit_path, audit)
     GC.gc()
-    pids = Int[]
     trace = NamedTuple[]
     try
-        append!(pids, addprocs(count;
-            exeflags=`--startup-file=no --project=$ROOT --threads=$threads_per_worker`,
-            env=["OMP_NUM_THREADS"=>string(threads_per_worker), "OPENBLAS_NUM_THREADS"=>"1", "MKL_NUM_THREADS"=>"1"]))
-        @sync for (index, pid) in enumerate(pids)
-            @async begin
-                remotecall_wait(Base.include, pid, Main, joinpath(ROOT, "experimental", "FastED.jl"))
-                remotecall_wait(Base.include, pid, Main, @__FILE__)
-                identity = remotecall_fetch(initialize_worker, pid, spec.config_path, index)
-                identity.cache_id == spec.cache_id && identity.settings_id == spec.settings_id ||
-                    error("Worker environment/cache identity differs from controller")
-                @info "Resident sector ready" index identity
-            end
-        end
         function record(mu, score, source)
             push!(trace, merge(FastED.score_summary_row(spec, mu, score, state_count),
                               (evaluation=length(trace)+1, source=source, timestamp=string(now()))))
             MottJainED.atomic_csv(joinpath(spec.result_directory, "mu_search_evaluations.csv"), DataFrame(trace))
             @info "N7 μ search" evaluation=length(trace) mu source valid=score.valid q=score.q reason=score.reason
         end
-        result = search_mu(mu -> evaluate_parallel(spec, pids, mu).score, opt; on_evaluation=record)
+        result = search_mu(mu -> evaluate_serial(spec, count, mu).score, opt; on_evaluation=record)
         # Independent cold re-solve at the selected point, using the same matrices and k.
-        cold = evaluate_parallel(spec, pids, result.best_mu; force=true)
+        cold = evaluate_serial(spec, count, result.best_mu; force=true)
         differences = [abs(getproperty(cold.score, key)-getproperty(result.score, key))
                        for key in (:q, :delta_s, :delta_o)]
         issues = copy(result.issues)
@@ -249,8 +227,6 @@ function run(spec; threads_per_worker=8)
         audit["error"] = sprint(showerror, err)
         MottJainED.atomic_toml(audit_path, audit)
         rethrow()
-    finally
-        isempty(pids) || rmprocs(pids)
     end
 end
 

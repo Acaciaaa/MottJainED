@@ -1,10 +1,10 @@
-# Bounded N=3 end-to-end exercise of the same four resident processes used on Slurm.
+# Bounded N=3 end-to-end exercise of the same serial-sector runner used on Slurm.
 # Does not construct any N=7 matrix or touch production cache/result directories.
 using Test, TOML, CSV, DataFrames
 include(joinpath(@__DIR__, "..", "experimental", "FastED.jl"))
 include(joinpath(@__DIR__, "..", "experimental", "FastMuSearch.jl"))
 
-@testset "Resident four-sector mu-search integration" begin
+@testset "Sequential cached mu-search integration" begin
     mktempdir() do directory
         config = TOML.parsefile(joinpath(@__DIR__, "..", "config", "fast_ed", "n7_uf0_165_search.toml"))
         config["model"]["nm1"] = 3
@@ -20,8 +20,9 @@ include(joinpath(@__DIR__, "..", "experimental", "FastMuSearch.jl"))
         path = joinpath(directory, "profile.toml")
         open(io -> TOML.print(io, config), path, "w")
         spec = FastED.load_spec(path)
-        result = FastMuSearch.run(spec; threads_per_worker=1)
+        result = FastMuSearch.run(spec)
         @test result["complete"] && result["audit_passed"]
+        @test result["execution_mode"] == "serial_sectors" && result["solver_processes"] == 1
         @test !result["global_minimum_proven"] && !result["cache_released"]
         @test abs(result["best_mu"]-0.10853896038463) < 0.0001
         @test isdir(spec.cache_directory)
@@ -38,7 +39,7 @@ include(joinpath(@__DIR__, "..", "experimental", "FastMuSearch.jl"))
         probe_mu = first(final.mus)
         probe_file = FastED.sector_result_path(spec, probe_mu, 1, 1)
         before = mtime(probe_file)
-        repeated = FastMuSearch.run(spec; threads_per_worker=1)
+        repeated = FastMuSearch.run(spec)
         @test repeated["audit_passed"]
         @test mtime(probe_file) == before
         @test repeated["best_mu"] ≈ result["best_mu"] atol=2e-5

@@ -179,8 +179,10 @@ output/two_size_tuning/n56_retained_local_vf0_01/
 旧 `output/fast_ed/fss_n56_*` 的部分结果保留，但不会混入新流程。
 
 **2026-09-12 当前入口：** 第一个新 N=7 点 `Uf0=1.65,Vf0=0.55,V0=0.34` 已准备好。
-使用 `sbatch slurm/fast_mu_search.sbatch`，在同一节点用四个常驻 sector 进程、各 8 线程，
-复用矩阵 cache 和完整 μ 结果。搜索从该点 N6 的 μ 出发，独立宽网格和临界区域细网格
+使用 `sbatch slurm/fast_mu_search.sbatch`，总申请 8 CPU（约 61 GiB）、一个进程 8 线程，
+四个 sector 依次求解，每次只持有一个 sector 的大矩阵。复用磁盘矩阵 cache 和完整 μ
+结果；已撤回 `589656e` 的固定 32 CPU 四进程方案，以免为等待另一个 sector 长期预留额度。
+搜索从该点 N6 的 μ 出发，独立宽网格和临界区域细网格
 检查竞争谷底，最后双侧精修与冷启动重算。只运行这一个参数点，不自动释放 cache。
 完整数据分析、搜索判据、资源和输出说明见 [N7_MU_SEARCH.md](N7_MU_SEARCH.md)。
 

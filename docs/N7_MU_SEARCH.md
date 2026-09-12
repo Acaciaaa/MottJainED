@@ -65,17 +65,32 @@ Do not turn a finite-resolution score minimum into a claim of a thermodynamic cr
 ## Cache and resources
 
 Use `H(mu)=H0+mu*Nf` with the existing per-sector H0/Nf/L2/C2 JLD2 cache. Build this
-one Hamiltonian's cache once (approximately 25 GB at N7). Four local Julia processes
-each load one sector once and retain its matrices while the controller selects μ.
-Each worker uses 8 threads, BLAS uses 1, and the Slurm job requests 32 CPUs on one
-node. The controller waits while the four sectors are solved in parallel. This is
-the same four-sector parallelism as the earlier array, now with matrices resident
-across μ values. It has not yet been resource-profiled at N7 as one combined job;
-inspect its MaxRSS/CPU usage after the first run.
+one Hamiltonian's cache once (approximately 25 GB at N7). The Slurm job requests
+**8 CPUs (approximately 61 GiB under the recorded partition policy)** and uses one
+Julia process with 8 threads and BLAS 1. Hamiltonian points, μ values, and the four
+sectors of each μ are all processed sequentially. No sector workers run concurrently.
+
+Only one sector's large matrices/vectors are held at a time; garbage collection runs
+before loading the next sector. Matrices are loaded from the persistent disk cache
+for each unfinished sector solve. Complete CSVs bypass both matrix loading and ED.
+This trades additional cache I/O for bounded memory and avoids holding 32 CPUs while
+building the cache or waiting for the slowest of four workers. The previous retained
+N7 measurements were 22.90 GB for preparation and 13.3 GB for the largest-sector pilot;
+both fit within the 8-CPU memory allowance. Check this new point's MaxRSS and CPU time
+after its first server run; an end-to-end cost reduction has not been measured yet.
+
+The old retained N7 array used 8 CPUs per task and at most four concurrent tasks.
+Commit `589656e` replaced that with one fixed 32-CPU allocation. The user rejected
+that reservation on cost grounds; this sequential 8-CPU runner supersedes it.
+Do not equate peak concurrent CPUs with actual billed resource time. The historical
+12 retained scout/refine μ points had a median sum of sector solve times of 24.17
+minutes, versus a median slowest-sector time of 7.11 minutes. These exclude cache
+loading, startup and queue time, and do not predict the new point's full-range runtime.
 
 Cold eigensolver starts are intentional: reusing an old eigenvector is not part of
-the speed claim. The gains come from matrix reuse, persistent processes, sector
-parallelism, and reusing completed μ results. FuzzifiED and the Hamiltonian are unchanged.
+the speed claim. The gains come from avoiding matrix reconstruction and reusing
+completed μ results across search phases and restarts. FuzzifiED, the Hamiltonian,
+and all μ-search/audit criteria are unchanged by this resource correction.
 
 Preparation, search and collection run in one Slurm job. No later Hamiltonian is
 submitted, and no cache is deleted automatically. The already-completed central N7
@@ -116,7 +131,9 @@ completed sector outputs. Do not run two copies of this same point concurrently.
 
 ## Validation completed before the first server run
 
-On local Julia 1.11.6, all 346 main-suite tests and 12 bounded integration checks pass:
+All 346 main-suite tests and 13 sequential integration checks pass on local Julia
+1.11.6. The integration minimum is `0.10854498882565`, unchanged from the previous
+four-process implementation. The validation commands are:
 
 ```bash
 julia --startup-file=no --project=. test/runtests.jl
@@ -124,10 +141,11 @@ JULIA_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1 \
   julia --startup-file=no --project=. test/fast_mu_search_integration.jl
 ```
 
-The integration test constructs only temporary N3 matrices, starts four one-thread
-workers, runs the full search/collection/cold-repeat path, and replays it to verify
-disk-result reuse. Its minimum `0.10854498882565` agrees with the downloaded N3 guide
-within `6.03e-6`. Unit checks also exercise a hidden competing valley near 0.10,
+The integration test constructs only temporary N3 matrices, runs sectors sequentially
+in one process through the full search/collection/cold-repeat path, and replays it to
+verify disk-result reuse. It checks the minimum against the downloaded N3 guide.
+Unit checks also exercise a hidden competing valley near 0.10,
 an unscored point inside the guard, boundary and budget failures, resident/direct
-spectrum equivalence, and truncated-CSV recovery. Slurm syntax and the 32-CPU guard
-were checked separately. No new N7 ED calculation was run locally.
+spectrum equivalence, and truncated-CSV recovery. Slurm syntax and a mocked launch
+check verify that 8 CPUs work while mismatched 4/32-CPU reservations are rejected.
+No new N7 ED calculation was run locally.
