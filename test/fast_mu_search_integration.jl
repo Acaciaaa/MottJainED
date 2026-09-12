@@ -1,4 +1,4 @@
-# Bounded N=3 end-to-end exercise of the same serial-sector runner used on Slurm.
+# Historical automatic-search prototype regression; not the current Slurm path.
 # Does not construct any N=7 matrix or touch production cache/result directories.
 using Test, TOML, CSV, DataFrames
 include(joinpath(@__DIR__, "..", "experimental", "FastED.jl"))

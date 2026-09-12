@@ -53,6 +53,10 @@ using .FastED
             mtime(joinpath(spec.cache_directory, file)) == timestamp
             for (file, timestamp) in mtimes
         )
+        rebuilt = FastED.prepare_caches(spec; force=true)
+        @test rebuilt["cache_id"] == manifest["cache_id"]
+        @test all(mtime(joinpath(spec.cache_directory, file)) > timestamp
+                  for (file, timestamp) in mtimes)
 
         for sector_index in eachindex(manifest["sectors"])
             output = FastED.solve_sector(spec, 1, sector_index)
@@ -89,6 +93,9 @@ using .FastED
         @test !FastED.result_is_current(resident_path, spec, 0.031, resident.z, resident.r)
         FastED.solve_sector(spec, 0.031, 1; resident=resident)
         @test FastED.result_is_current(resident_path, spec, 0.031, resident.z, resident.r)
+        completed_at = mtime(resident_path)
+        FastED.solve_sector(spec, 0.031, 1; force=true)
+        @test mtime(resident_path) > completed_at
         @test_throws ArgumentError FastED.solve_sector(spec, 0.032, 2; resident=resident)
 
         collected = FastED.collect_all(spec)
@@ -120,6 +127,23 @@ using .FastED
         @test !isdir(spec.cache_directory)
         @test isfile(joinpath(spec.result_directory, "best_summary.csv"))
     end
+end
+
+@testset "Fresh N7 five-point scout uses the validated array workflow" begin
+    config_root = joinpath(@__DIR__, "..", "config", "fast_ed")
+    scout = FastED.load_spec(joinpath(config_root, "n7_uf0_165_k20_scout_restart.toml"))
+    retired = FastED.load_spec(joinpath(config_root, "n7_uf0_165_search.toml"))
+    retained = FastED.load_spec(joinpath(config_root, "n7_retained_k20.toml"))
+    center = 2*0.14320460558017-0.14128848931940
+    @test scout.mus ≈ center .+ [-0.01, -0.005, 0.0, 0.005, 0.01] atol=1e-14
+    @test FastED.plan(scout).tasks == 20
+    @test scout.nm1 == 7 && scout.solver.k == 20 && !scout.solver.warm_start
+    @test scout.cache_id == retired.cache_id && scout.settings_id == retired.settings_id
+    @test scout.result_directory != retired.result_directory
+    @test scout.cache_id != retained.cache_id
+    @test !haskey(scout.config, "mu_search")
+    @test !scout.config["fast_ed"]["allow_cache_release"]
+    @test scout.config["scout"]["requires_review"] && !scout.config["scout"]["muc_confirmed"]
 end
 
 include(joinpath(@__DIR__, "..", "experimental", "FastMuSearch.jl"))

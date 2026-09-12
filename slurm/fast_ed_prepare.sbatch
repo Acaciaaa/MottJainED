@@ -2,9 +2,8 @@
 #SBATCH --job-name=mj-n7-cache
 #SBATCH --nodes=1
 #SBATCH --ntasks-per-node=1
-# N=7 first run requests 16 CPUs mainly for the partition's per-CPU memory.
-# Computation remains at 8 threads until seff establishes a safe smaller request.
-#SBATCH --cpus-per-task=16
+# Recorded N=7 prepare MaxRSS fits the partition's 8-CPU memory allowance.
+#SBATCH --cpus-per-task=8
 #SBATCH --partition=sdicnormal
 #SBATCH --time=48:00:00
 #SBATCH --output=slurm-logs/%x-%j.out
@@ -25,4 +24,11 @@ export OPENBLAS_NUM_THREADS=1
 export MKL_NUM_THREADS=1
 
 cd "$PROJECT_ROOT"
-julia --startup-file=no --project=. scripts/fast_ed.jl prepare --config="$CONFIG"
+extra_args=(--config="$CONFIG")
+case "${FORCE_REBUILD:-false}" in
+    true) extra_args+=(--force) ;;
+    false) ;;
+    *) echo "FORCE_REBUILD must be true or false" >&2; exit 2 ;;
+esac
+echo "$(date -Is) prepare: config=$CONFIG threads=$threads rebuild=${FORCE_REBUILD:-false} host=$(hostname)"
+julia --startup-file=no --project=. scripts/fast_ed.jl prepare "${extra_args[@]}"

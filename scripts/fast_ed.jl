@@ -1,5 +1,7 @@
 #!/usr/bin/env julia
 
+println("FastED starting: ", join(ARGS, " "))
+flush(stdout)
 import Pkg
 
 const PROJECT_ROOT = normpath(joinpath(@__DIR__, ".."))
@@ -7,6 +9,8 @@ Pkg.activate(PROJECT_ROOT; io=devnull)
 
 include(joinpath(PROJECT_ROOT, "experimental", "FastED.jl"))
 using .FastED
+println("FastED dependencies loaded; Julia threads=", Threads.nthreads())
+flush(stdout)
 
 function parse_options(args)
     options = Dict{String,String}()

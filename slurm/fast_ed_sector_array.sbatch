@@ -4,9 +4,8 @@
 #SBATCH --job-name=mj-n7-sector
 #SBATCH --nodes=1
 #SBATCH --ntasks-per-node=1
-# Reserve extra CPUs for N=7 memory, but keep the measured eigensolver optimum
-# at 8 threads. Revisit this after checking MaxRSS with seff.
-#SBATCH --cpus-per-task=16
+# Use the same 8-CPU allocation as the completed retained N=7 arrays.
+#SBATCH --cpus-per-task=8
 #SBATCH --partition=sdicnormal
 #SBATCH --time=48:00:00
 #SBATCH --output=slurm-logs/%x-%A_%a.out
@@ -30,7 +29,14 @@ export OPENBLAS_NUM_THREADS=1
 export MKL_NUM_THREADS=1
 
 cd "$PROJECT_ROOT"
+extra_args=(--config="$CONFIG")
+case "${FORCE_SOLVE:-false}" in
+    true) extra_args+=(--force) ;;
+    false) ;;
+    *) echo "FORCE_SOLVE must be true or false" >&2; exit 2 ;;
+esac
+echo "$(date -Is) sector: task=$TASK_ID mu_index=$MU_INDEX sector_index=$SECTOR_INDEX config=$CONFIG threads=$threads force=${FORCE_SOLVE:-false} host=$(hostname)"
 julia --startup-file=no --project=. scripts/fast_ed.jl solve \
-    --config="$CONFIG" \
+    "${extra_args[@]}" \
     --mu-index="$MU_INDEX" \
     --sector-index="$SECTOR_INDEX"

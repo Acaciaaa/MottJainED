@@ -329,9 +329,14 @@ function prepare_caches(spec; force::Bool=false)
             @warn "complete cache could not be reused; checking sector files individually" exception=(err, catch_backtrace())
         end
     end
+    model_started = time()
+    @info "preparing model and operators before sector-cache construction" nm1=spec.nm1 force
+    flush(stderr)
     model = build_model(nm1=spec.nm1)
     fixed = MottJainED.with_coupling(spec.couplings, :mu, 0.0)
     h0terms = hamiltonian_terms(model, fixed; include_mu=false)
+    @info "model and operators ready" seconds=time()-model_started
+    flush(stderr)
     entries = Dict{String,Any}[]
     for key in SECTOR_ORDER
         path = sector_cache_path(spec, key.z, key.r)
@@ -339,12 +344,15 @@ function prepare_caches(spec; force::Bool=false)
             cache_entry(path, spec, key.z, key.r)
         else
             @info "building persistent sector cache" nm1=spec.nm1 z=key.z r=key.r path
+            flush(stderr)
             build_sector_cache(model, h0terms, spec, key.z, key.r, path)
         end
         entry === nothing || push!(entries, entry)
         MottJainED.atomic_toml(
             cache_manifest_path(spec), cache_manifest(spec, entries; complete=false),
         )
+        @info "sector cache saved" z=key.z r=key.r path
+        flush(stderr)
         GC.gc()
     end
     isempty(entries) && error("No non-empty symmetry sectors were found")
@@ -425,11 +433,15 @@ function solve_sector(spec, mu::Real, sector_index::Integer; force::Bool=false, 
         @info "reusing completed sector result" mu z r output
         return output
     end
+    @info "loading sector matrices" mu z r
+    flush(stderr)
     loaded = resident === nothing ? load_sector_solver(spec, sector_index) : resident
     loaded.cache_id == spec.cache_id && loaded.sector_index == sector_index &&
         loaded.z == z && loaded.r == r || throw(ArgumentError("Resident sector identity mismatch"))
     sector = loaded.sector
     cache_path = loaded.cache_path
+    @info "solving sector spectrum" mu z r dimension=loaded.dimension k=spec.solver.k threads=Threads.nthreads()
+    flush(stderr)
     started = time()
     energies, vectors = MottJainED._eigensystem(sector, Float64(mu), spec.solver)
     order = sortperm(energies)
@@ -619,7 +631,7 @@ function collect_all(spec; allow_incomplete::Bool=false)
             end
             MottJainED.atomic_toml(
                 joinpath(spec.result_directory, "collection_manifest.toml"),
-                Dict{String,Any}(
+                merge(Dict{String,Any}(
                     "complete" => isempty(failures) && length(rows) == length(spec.mus),
                     "collected_mu_count" => length(rows),
                     "requested_mu_count" => length(spec.mus),
@@ -630,7 +642,10 @@ function collect_all(spec; allow_incomplete::Bool=false)
                     "settings_id" => spec.settings_id,
                     "config_path" => spec.config_path,
                     "collected_at" => string(now()),
-                ),
+                ), haskey(spec.config, "scout") ? Dict{String,Any}(
+                    "stage" => "scout", "requires_review" => true,
+                    "muc_confirmed" => false,
+                ) : Dict{String,Any}()),
             )
         end
     end

@@ -1,3 +1,5 @@
+# Historical automatic-search prototype. The active N7 workflow uses FastED
+# prepare/sector-array/collect with n7_uf0_165_k20_scout_restart.toml.
 module FastMuSearch
 
 using CSV, DataFrames, Dates, LinearAlgebra, MottJainED, TOML

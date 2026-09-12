@@ -1,4 +1,4 @@
-# N=7 cached chemical-potential search, first new point
+# N=7 fresh five-point scout, first new point
 
 ## N=5/6 results audited on 2026-09-12
 
@@ -25,127 +25,119 @@ All five N6 searches had an unscored wide-Brent evaluation at `mu=0.0577864045`:
 curlJ raw rank 3 was absent even at k=30. An unscored point cannot be treated as
 evidence that q is large. Raw-rank conventions and the five score terms remain unchanged.
 
-## First point and search logic
+## Fresh restart: use the completed retained-N7 method
 
-Only `config/fast_ed/n7_uf0_165_search.toml` is prepared for a new N7 Hamiltonian:
+The active profile is `config/fast_ed/n7_uf0_165_k20_scout_restart.toml`:
 `(Uf,Uf0,U0,Vf,Vf0,V0,t)=(0.46,1.65,4.14,0,0.55,0.34,0.5)`.
-This is not the old stage11 compromise, whose Vf0/V0 differ.
+This is the first new N7 point; the completed retained center and N5/6 are unchanged.
 
-Its same-parameter guide minima are N3 `0.10853896038463`, N4 `0.13537251915897`,
-N5 `0.14128848931940`, N6 `0.14320460558017`. Use N6 as a search seed. The linear
-extrapolation `0.14512072184094` is a guide, not a fixed chemical potential.
+The user explicitly requested a fresh start after job 548331 ran for over 3.5 hours.
+Stop that job before rebuilding this point's cache. Do not reuse its matrix files or
+sector results. `FORCE_REBUILD=true` rebuilds all four selected sector caches, and
+`FORCE_SOLVE=true` forces fresh spectra. The new result run name is
+`n7_uf0_165_scout_restart`. The retained center has a different cache identity and is
+untouched. After this fresh preparation, all new scout tasks share the newly built
+matrices: `H(mu)=H0+mu*Nf`. Rebuilding matrices separately for every mu is unnecessary.
 
-`experimental/FastMuSearch.jl` orchestrates the existing FSS scalar-search routines:
+Use the same staged method that completed the retained N7 point:
 
-1. Local continuation around the N6 seed: half-width 0.02, 9 grid points, up to 3
-   boundary expansions, valley refinement, and an independent whole-range Brent
-   challenger over `[-0.095,0.305]`, as in the established workflow.
-2. Independently evaluate a 21-point grid over that full range (spacing 0.02), then
-   refine every discovered valid valley. This does not depend on the first result.
-3. Independently evaluate a 15-point guard grid over `[0.095,0.165]` (spacing 0.005)
-   and refine its valleys. This covers the guide minima, the predicted N7 neighborhood,
-   and the old roughly 0.10 versus 0.14 branch ambiguity.
-4. Select the lowest actually evaluated q across all searches. Check the winner's
-   two sides at offsets 0.00025 and refine again. Mu tolerance is `2e-5`.
-5. Repeat the selected spectrum with independent cold eigensolver starts, at the
-   same k=20; require q and DeltaS/O differences below `1e-5`.
+1. Prepare the current Hamiltonian's four sector caches once, using 8 CPUs/threads.
+2. Run five scout mu values as 20 independent `(mu, sector)` Slurm array tasks:
+   each task requests 8 CPUs/threads, BLAS 1; `--array=0-19%4` allows at most four
+   simultaneous tasks. Each task exits and releases its own allocation when done.
+3. Confirm all 20 tasks succeeded, then collect their small CSVs using one CPU.
+   Do not attach collection to the original array's `afterok`: a failed index that
+   is later rerun separately would leave that original dependency blocked.
+4. Review the five-point q curve, actual spectra and competing branches. Only then
+   choose the next small refinement grid, as with the old seven-point refinement.
+   No automatic wide optimizer, automatic next Hamiltonian, or cache release.
 
-Every μ score requires complete, identity-matching sector CSVs. A truncated sector
-file is recomputed. Shared μ evaluations use memoization and disk results across
-phases/restarts. The 120-μ budget caps unexpected search growth; it is not a promise
-that all 120 values will be needed. A final cold repeat is one additional solve.
+The five scout values are
+`[0.13512072184094, 0.14012072184094, 0.14512072184094, 0.15012072184094, 0.15512072184094]`.
+Their center is `2*mu(N6)-mu(N5)`, using this point's audited N5/N6 values
+`0.14128848931940/0.14320460558017`. N3/N4 guides are
+`0.10853896038463/0.13537251915897`. These guides are not measured N7 muc values.
 
-Disagreement, a missing score inside the dense guard, a winner outside the guard,
-failed convergence, or a failed cold repeat leaves the data/cache and exits with a
-review-needed error. A successful local/grid audit is **not** a mathematical proof
-of a global minimum: unsampled narrow valleys and unscored outer regions remain
-explicit limitations. The audit always records `global_minimum_proven=false`.
-Do not turn a finite-resolution score minimum into a claim of a thermodynamic critical point.
+## Correctness and timing
 
-## Cache and resources
+The Hamiltonian, FuzzifiED, k=20, cold solver starts, five q terms and raw-rank
+conventions are unchanged. Incomplete or identity-mismatched sector CSVs cannot be
+collected as a valid full spectrum. The five-point minimum is only a scout candidate:
+`collection_manifest.toml` explicitly records `stage="scout"`, `requires_review=true`,
+and `muc_confirmed=false`. Even an interior sampled minimum is not a certified muc.
+Inspect boundary behavior, all five residuals, factor, DeltaS/O, and state ordering;
+choose refinement and any targeted rival-branch checks from those results. Do not
+assign a high q to an unscored point or discard an inconvenient competing minimum.
 
-Use `H(mu)=H0+mu*Nf` with the existing per-sector H0/Nf/L2/C2 JLD2 cache. Build this
-one Hamiltonian's cache once (approximately 25 GB at N7). The Slurm job requests
-**8 CPUs (approximately 61 GiB under the recorded partition policy)** and uses one
-Julia process with 8 threads and BLAS 1. Hamiltonian points, μ values, and the four
-sectors of each μ are all processed sequentially. No sector workers run concurrently.
+The earlier retained-N7 preparation took 14m40s and its largest-sector pilot 7m59s.
+Those measurements refer to one preparation and one sector, not an entire search.
+The completed old workflow used five scout points followed by seven refinement
+points. New-point queue time and total runtime have not been measured.
 
-Only one sector's large matrices/vectors are held at a time; garbage collection runs
-before loading the next sector. Matrices are loaded from the persistent disk cache
-for each unfinished sector solve. Complete CSVs bypass both matrix loading and ED.
-This trades additional cache I/O for bounded memory and avoids holding 32 CPUs while
-building the cache or waiting for the slowest of four workers. The previous retained
-N7 measurements were 22.90 GB for preparation and 13.3 GB for the largest-sector pilot;
-both fit within the 8-CPU memory allowance. Check this new point's MaxRSS and CPU time
-after its first server run; an end-to-end cost reduction has not been measured yet.
+Commits `589656e` and `097cc0f` deviated from that workflow: the first held one
+32-CPU allocation; the second serialized every sector inside one 8-CPU job. Both
+also expanded the work to 9 local, 21 wide and 15 guard points plus multiple
+refinements, with a 120-mu budget. The user rejected both deviations. The old
+`scripts/fast_mu_search.jl` and `slurm/fast_mu_search.sbatch` entrypoints are removed.
+`experimental/FastMuSearch.jl` and its profile/test remain historical prototypes,
+not the active server workflow. Peak concurrency of four independent 8-CPU tasks
+must not be confused with holding 32 CPUs for the lifetime of one long job.
 
-The old retained N7 array used 8 CPUs per task and at most four concurrent tasks.
-Commit `589656e` replaced that with one fixed 32-CPU allocation. The user rejected
-that reservation on cost grounds; this sequential 8-CPU runner supersedes it.
-Do not equate peak concurrent CPUs with actual billed resource time. The historical
-12 retained scout/refine μ points had a median sum of sector solve times of 24.17
-minutes, versus a median slowest-sector time of 7.11 minutes. These exclude cache
-loading, startup and queue time, and do not predict the new point's full-range runtime.
+## Server submission
 
-Cold eigensolver starts are intentional: reusing an old eigenvector is not part of
-the speed claim. The gains come from avoiding matrix reconstruction and reusing
-completed μ results across search phases and restarts. FuzzifiED, the Hamiltonian,
-and all μ-search/audit criteria are unchanged by this resource correction.
-
-Preparation, search and collection run in one Slurm job. No later Hamiltonian is
-submitted, and no cache is deleted automatically. The already-completed central N7
-cache and `n7_k20_plot_files.tar.gz` are preserved.
-
-## Server entry and results
-
-From `/public/home/ruiqixu/MottJainED/MottJainED-fast-ed`, after pulling
-`fast-ed-experiment` and creating `slurm-logs`:
+First stop job 548331 and confirm it has left the queue. Pull `fast-ed-experiment`
+in `/public/home/ruiqixu/MottJainED/MottJainED-fast-ed`, then run:
 
 ```bash
-sbatch slurm/fast_mu_search.sbatch
+mkdir -p slurm-logs
+export CONFIG=config/fast_ed/n7_uf0_165_k20_scout_restart.toml
+export THREADS=8
+PREP_RAW=$(sbatch --parsable --cpus-per-task=8 --export=ALL,FORCE_REBUILD=true slurm/fast_ed_prepare.sbatch)
+PREP=${PREP_RAW%%;*}
+printf '%s\n' "$PREP" > slurm-logs/last-n7-uf0165-prepare-job-id.txt
+SCOUT_RAW=$(sbatch --parsable --cpus-per-task=8 --array=0-19%4 --dependency=afterok:"$PREP" --export=ALL,FORCE_SOLVE=true slurm/fast_ed_sector_array.sbatch)
+SCOUT=${SCOUT_RAW%%;*}
+printf '%s\n' "$SCOUT" > slurm-logs/last-n7-uf0165-scout-job-id.txt
+squeue -j "$PREP,$SCOUT" -o '%.18i %.24j %.8T %.6C %.12M %R'
 ```
 
-The log prints the exact cache/settings-qualified result directory under
-`output/fast_ed/runs/n7_uf0_165_search/`. Download that small run directory, not
-`output/fast_ed/cache/`. It includes:
+Only scout depends on the single preparation job; its tasks start after preparation
+succeeds. Logs identify the config, task, mu/sector indices, threads and fresh-run
+flags immediately; Julia logs dependency loading, operator preparation, cache writes,
+matrix loading and the start of each eigensolve. Do not launch a second rebuild
+while any task for this point is still running.
 
-- `mu_search_evaluations.csv`: full μ/q trace, with invalid scores and reasons;
-- `mu_search_audit.toml`: coverage, convergence, competing-branch comparisons and issues;
-- `scan_summary.csv`, `best_summary.csv`, `best_relations.csv`, `best_spectrum.csv`;
-- `cold_repeat.csv`, `collection_manifest.toml`, `evaluated_profile.toml`;
-- per-μ small sector and merged-spectrum CSVs for spectral continuity/rank checks.
+After all 20 array tasks are confirmed successful, collect explicitly:
 
-The static input profile's `fast_ed.mus` contains only the initial seed; the search
-chooses additional values dynamically. For later collection use the saved
-`evaluated_profile.toml`, which lists the actual evaluated values. Do not collect
-with the original one-seed profile and overwrite the full summaries.
+```bash
+sbatch --export=ALL,CONFIG=config/fast_ed/n7_uf0_165_k20_scout_restart.toml slurm/fast_ed_collect.sbatch
+```
 
-`FastED.validate_collection` still rejects any invalid q in a full scan. A
-`mu_search_audit.toml` that passes local/grid checks while listing unscored outer
-points does not override that restriction or authorize cache release. Analyze the
-downloaded spectrum/trace first; only after resolving coverage limits should an
-explicit accepted-result/cache-release step be prepared. Failures retain the cache.
+Download `output/fast_ed/runs/n7_uf0_165_scout_restart/`, plus preparation/array
+logs and accounting statistics. It contains cache/settings-qualified
+`scan_summary.csv`, `best_summary.csv`, `best_relations.csv`, `best_spectrum.csv`,
+`collection_manifest.toml` and all per-mu small spectra. Do not download the large
+matrix cache. Return these scout results for review before scheduling refinement.
+The current profile forbids cache release; the retained cache and
+`n7_k20_plot_files.tar.gz` remain preserved.
 
-Re-submit the same script after a stopped/failed job to replay the search and reuse
-completed sector outputs. Do not run two copies of this same point concurrently.
+## Local validation
 
-## Validation completed before the first server run
+358 main-suite assertions and eight N3 integration assertions passed locally.
+Slurm shell syntax and the mocked prepare/20-task launch checks also passed.
 
-All 346 main-suite tests and 13 sequential integration checks pass on local Julia
-1.11.6. The integration minimum is `0.10854498882565`, unchanged from the previous
-four-process implementation. The validation commands are:
+The main suite verifies cached/direct spectrum equivalence, forced cache and result
+replacement, truncated-result rejection, the exact 20-task profile, and isolation
+from the retained center. A separate N3 integration runs fresh preparation, all 20
+sector solves and collection; it checks that the sampled minimum matches the N3
+guide and that the collection remains explicitly preliminary:
 
 ```bash
 julia --startup-file=no --project=. test/runtests.jl
 JULIA_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1 \
-  julia --startup-file=no --project=. test/fast_mu_search_integration.jl
+  julia --startup-file=no --project=. test/fast_ed_scout_restart_integration.jl
 ```
 
-The integration test constructs only temporary N3 matrices, runs sectors sequentially
-in one process through the full search/collection/cold-repeat path, and replays it to
-verify disk-result reuse. It checks the minimum against the downloaded N3 guide.
-Unit checks also exercise a hidden competing valley near 0.10,
-an unscored point inside the guard, boundary and budget failures, resident/direct
-spectrum equivalence, and truncated-CSV recovery. Slurm syntax and a mocked launch
-check verify that 8 CPUs work while mismatched 4/32-CPU reservations are rejected.
-No new N7 ED calculation was run locally.
+Shell launch checks use a mocked Julia executable to verify force flags, 8-thread
+environment and the five-by-four task mapping. These are not real Slurm runtime or
+performance measurements. No N7 ED is performed locally.

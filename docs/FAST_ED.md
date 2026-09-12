@@ -47,13 +47,15 @@ julia --project=. scripts/fast_ed.jl compare \
 把上面 profile 换成 `config/fast_ed/n6_retained_validation.toml` 可做同样的
 N=6 检查。
 
-## N=7 建议顺序
+## 已完成的 retained N=7 流程（历史记录）
+
+当前新点的全新重跑入口见后文及 [N7_MU_SEARCH.md](N7_MU_SEARCH.md)；本节保留原有实测流程。
 
 N=7 首次服务器实测的四个缓存合计为 25 GB，构造用时 14 分 40 秒，峰值内存
 22.90 GB。建议至少留 40 GB 可用工作盘。最大 sector 的 k=20 pilot 用时
 7 分 59 秒，峰值内存约 13.3 GB。`sdicnormal` 的 8 CPU 额度约为 61 GB，已有
-充足余量；正式 sector array 使用 8 CPU/8 线程。缓存模板仍保留首次运行时的
-16 CPU 保守额度。
+充足余量；prepare 与 sector array 模板现均使用 8 CPU/8 线程。首次 prepare
+曾保守申请 16 CPU，不能把这个历史额度误用作当前默认。
 
 第一次建立共享缓存时不要立刻连锁提交全部20个求解任务：
 
@@ -178,18 +180,21 @@ output/two_size_tuning/n56_retained_local_vf0_01/
 及 `search/fss_optimize_evaluations.csv` 后，才安排第一个新 N=7 点。
 旧 `output/fast_ed/fss_n56_*` 的部分结果保留，但不会混入新流程。
 
-**2026-09-12 当前入口：** 第一个新 N=7 点 `Uf0=1.65,Vf0=0.55,V0=0.34` 已准备好。
-使用 `sbatch slurm/fast_mu_search.sbatch`，总申请 8 CPU（约 61 GiB）、一个进程 8 线程，
-四个 sector 依次求解，每次只持有一个 sector 的大矩阵。复用磁盘矩阵 cache 和完整 μ
-结果；已撤回 `589656e` 的固定 32 CPU 四进程方案，以免为等待另一个 sector 长期预留额度。
-搜索从该点 N6 的 μ 出发，独立宽网格和临界区域细网格
-检查竞争谷底，最后双侧精修与冷启动重算。只运行这一个参数点，不自动释放 cache。
-完整数据分析、搜索判据、资源和输出说明见 [N7_MU_SEARCH.md](N7_MU_SEARCH.md)。
+**2026-09-12 最新纠正：** 用户要求当前 Uf0=1.65、Vf0=0.55、V0=0.34 点全部重来，
+不复用作业 548331 的 cache 或谱。先停止 548331，再用
+`config/fast_ed/n7_uf0_165_k20_scout_restart.toml`：强制 prepare 重建当前点 cache，
+然后提交 `--array=0-19%4` 的五点 scout。prepare 与每个 sector 任务均为 8 CPU/线程；
+最多同时运行四个独立任务，各自结束释放资源。这恢复了已经完成的 retained N7 做法。
+新一轮任务共享本轮新建矩阵，不会重复逐 μ 建矩阵。中心 cache 与已完成 N56 不动。
 
-动态搜索会生成列出所有实际 μ 的 `evaluated_profile.toml`。下面的通用 audit/collection
-流程应使用该文件，不能使用只含 seed 的原始输入 profile 覆盖完整扫描摘要。若全范围
-存在无法打分的点，通用 audit 仍会拒绝，必须先审查这些覆盖缺口；局部搜索通过不等于
-可以跳过审计并释放 cache。
+已移除大范围自动搜索的 `slurm/fast_mu_search.sbatch` 和 `scripts/fast_mu_search.jl`。
+`589656e` 固定 32 CPU、`097cc0f` 全 sector 串行，以及自动增加大量 μ 搜索，均为已撤回
+的错误改动。不能把“不同 Hamiltonian 逐点执行”解释成“同一点所有 sector 也串行”。
+
+本轮只做五点 scout；结果明确标为待检查，不能直接把最低采样点称作真 muc。
+结果回来后再按原方法选小范围精扫，并按竞争分支和原始谱安排必要检查。
+使用该 scout profile 收集即可，完整命令见 [N7_MU_SEARCH.md](N7_MU_SEARCH.md)。
+通过下面的通用 audit 只代表数值完整与边界检查通过，不等于物理临界点认证。
 
 N=7 阶段每次只处理一个新参数点。同一参数点收集后，可先运行只读审计：
 

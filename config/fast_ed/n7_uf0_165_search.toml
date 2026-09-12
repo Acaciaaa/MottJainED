@@ -1,3 +1,4 @@
+# RETIRED prototype profile; use n7_uf0_165_k20_scout_restart.toml on the server.
 # First new N=7 Hamiltonian. N=5/6 results audited on 2026-09-12.
 # Uf0=1.65 at fixed Vf0=0.55,V0=0.34 (not the old stage11 compromise).
 [model]
