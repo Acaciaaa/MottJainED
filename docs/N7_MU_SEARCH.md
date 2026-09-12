@@ -1,4 +1,4 @@
-# N=7 fresh five-point scout, first new point
+# N=7 Uf0=1.65: completed scout and seven-point refinement
 
 ## N=5/6 results audited on 2026-09-12
 
@@ -25,119 +25,144 @@ All five N6 searches had an unscored wide-Brent evaluation at `mu=0.0577864045`:
 curlJ raw rank 3 was absent even at k=30. An unscored point cannot be treated as
 evidence that q is large. Raw-rank conventions and the five score terms remain unchanged.
 
-## Fresh restart: use the completed retained-N7 method
+## Current step: seven-point refinement (2026-09-13)
 
-The active profile is `config/fast_ed/n7_uf0_165_k20_scout_restart.toml`:
-`(Uf,Uf0,U0,Vf,Vf0,V0,t)=(0.46,1.65,4.14,0,0.55,0.34,0.5)`.
-This is the first new N7 point; the completed retained center and N5/6 are unchanged.
+The user downloaded the raw spectra and requested local analysis without a server
+collection job. Preparation 548421 and all 20 tasks of scout array 548422 completed
+with exit code 0:0. The cache manifest and 20 CSV/TOML pairs identify the intended
+Hamiltonian `(Uf,Uf0,U0,Vf,Vf0,V0,t)=(0.46,1.65,4.14,0,0.55,0.34,0.5)`.
+This is not the stage11 compromise with different Vf0/V0.
 
-The user explicitly requested a fresh start after job 548331 ran for over 3.5 hours.
-Stop that job before rebuilding this point's cache. Do not reuse its matrix files or
-sector results. `FORCE_REBUILD=true` rebuilds all four selected sector caches, and
-`FORCE_SOLVE=true` forces fresh spectra. The new result run name is
-`n7_uf0_165_scout_restart`. The retained center has a different cache identity and is
-untouched. After this fresh preparation, all new scout tasks share the newly built
-matrices: `H(mu)=H0+mu*Nf`. Rebuilding matrices separately for every mu is unnecessary.
+| Scout mu | q | DeltaS | DeltaO |
+|---:|---:|---:|---:|
+| 0.13512072184094 | 0.23075022 | 1.57561738 | 3.16332619 |
+| 0.14012072184094 | 0.18052423 | 1.41758253 | 2.90544710 |
+| 0.14512072184094 | 0.10047138 | 1.75819320 | 2.81800020 |
+| 0.15012072184094 | 0.19312703 | 2.05289253 | 2.79942730 |
+| 0.15512072184094 | 0.27789490 | 2.25381571 | 2.80376954 |
 
-Use the same staged method that completed the retained N7 point:
+All five points contain 80 states and all five q relations. All 20 CSV/TOML pairs
+pass identity, complete-rank, solver-setting and dimension checks; independent
+Python reconstruction agrees with the Julia q/factor/DeltaS/O values exactly at the
+saved precision. Maximum quantum-number rounding error is 2.50e-10, and the largest
+lowest-multiplet copy splitting is 4.80e-14. Scoring uses the existing
+raw-rank convention: S raw rank 2, J raw rank 1, curlJ raw rank 3 (the second distinct
+multiplet), dJ raw rank 1, and T raw rank 1. No deduplication precedes this scoring.
+The largest required sector rank over the scout is 13; at its best sampled point it
+is 9. Cold k=20 starts, eigensolver tolerances and the five score terms stay unchanged.
 
-1. Prepare the current Hamiltonian's four sector caches once, using 8 CPUs/threads.
-2. Run five scout mu values as 20 independent `(mu, sector)` Slurm array tasks:
-   each task requests 8 CPUs/threads, BLAS 1; `--array=0-19%4` allows at most four
-   simultaneous tasks. Each task exits and releases its own allocation when done.
-3. Confirm all 20 tasks succeeded, then collect their small CSVs using one CPU.
-   Do not attach collection to the original array's `afterok`: a failed index that
-   is later rerun separately would leave that original dependency blocked.
-4. Review the five-point q curve, actual spectra and competing branches. Only then
-   choose the next small refinement grid, as with the old seven-point refinement.
-   No automatic wide optimizer, automatic next Hamiltonian, or cache release.
+The sampled minimum is interior. Fits through its two neighboring points estimate
+mu=0.14493829 from q and 0.14488384 from q squared. These are only guides for choosing
+the next grid. The existing N3/N4 full-grid and N5/N6 local/wide checks at this same
+Hamiltonian select the continuation branch leading toward this neighborhood; they do
+not prove that N7 has no unsampled competing branch. In particular, an old minimum
+near 0.10 at different couplings must not be transplanted to this point.
 
-The five scout values are
-`[0.13512072184094, 0.14012072184094, 0.14512072184094, 0.15012072184094, 0.15512072184094]`.
-Their center is `2*mu(N6)-mu(N5)`, using this point's audited N5/N6 values
-`0.14128848931940/0.14320460558017`. N3/N4 guides are
-`0.10853896038463/0.13537251915897`. These guides are not measured N7 muc values.
+Use `config/fast_ed/n7_uf0_165_k20_refine.toml` to compute exactly:
 
-## Correctness and timing
+```text
+0.14425, 0.14450, 0.14475, 0.14500, 0.14525, 0.14550, 0.14575
+```
 
-The Hamiltonian, FuzzifiED, k=20, cold solver starts, five q terms and raw-rank
-conventions are unchanged. Incomplete or identity-mismatched sector CSVs cannot be
-collected as a valid full spectrum. The five-point minimum is only a scout candidate:
-`collection_manifest.toml` explicitly records `stage="scout"`, `requires_review=true`,
-and `muc_confirmed=false`. Even an interior sampled minimum is not a certified muc.
-Inspect boundary behavior, all five residuals, factor, DeltaS/O, and state ordering;
-choose refinement and any targeted rival-branch checks from those results. Do not
-assign a high q to an unscored point or discard an inconvenient competing minimum.
+The spacing is 0.00025, as in the completed retained-N7 refinement. All seven values
+are new. After receiving these results, compare the actual minimum and both sides,
+five residuals, factor, scalar ordering, lowest O and the scout/guide branches. A
+boundary minimum, discontinuity, missing level or conflicting branch calls for
+specific additional points; do not automatically launch a broad optimizer. Do not
+report an interpolated estimate as a measured muc or a proven critical point.
+The raw scout includes only the lowest O multiplet's two copies, so it does not
+establish continuity of a second, higher O level.
 
-The earlier retained-N7 preparation took 14m40s and its largest-sector pilot 7m59s.
-Those measurements refer to one preparation and one sector, not an entire search.
-The completed old workflow used five scout points followed by seven refinement
-points. New-point queue time and total runtime have not been measured.
+## Resources: measured scout and unchanged next-run settings
 
-Commits `589656e` and `097cc0f` deviated from that workflow: the first held one
-32-CPU allocation; the second serialized every sector inside one 8-CPU job. Both
-also expanded the work to 9 local, 21 wide and 15 guard points plus multiple
-refinements, with a 120-mu budget. The user rejected both deviations. The old
-`scripts/fast_mu_search.jl` and `slurm/fast_mu_search.sbatch` entrypoints are removed.
-`experimental/FastMuSearch.jl` and its profile/test remain historical prototypes,
-not the active server workflow. Peak concurrency of four independent 8-CPU tasks
-must not be confused with holding 32 CPUs for the lifetime of one long job.
+| Measurement | Result |
+|---|---:|
+| Preparation elapsed / MaxRSS | 13m51s / 22.99 GiB |
+| Sector task elapsed range / median | 5m34s–9m28s / 6m50s |
+| Largest sector-task MaxRSS | 14.13 GiB |
+| Scout span, first task start to last task end | about 38m43s |
+| Preparation start to last scout task end | about 52m34s |
+| Scout allocated CPU hours / actual CPU hours | 18.6822 / 6.1280 |
 
-## Server submission
+Spans use the log start timestamps and sacct elapsed times; they exclude queue time
+before preparation and are not a guaranteed runtime for refinement. Scout CPU
+utilization averaged 32.80% of the 8-CPU task allocations. No new thread-count tuning
+has been measured, so preserve the requested and previously validated 8-thread setup.
 
-First stop job 548331 and confirm it has left the queue. Pull `fast-ed-experiment`
-in `/public/home/ruiqixu/MottJainED/MottJainED-fast-ed`, then run:
+Keep the matrices freshly built by 548421. The server cache is
+`output/fast_ed/cache/nm7_aaa8ccb4a8dd9fef`; refinement's unchanged Hamiltonian,
+source and solver definitions retain the same cache/settings identities. Do not
+prepare again, delete this cache, or use FORCE_SOLVE=true for normal continuation.
+The 28 independent tasks each request 8 CPUs/threads, BLAS 1, with at most four
+simultaneous tasks. Each exits and releases its own allocation. The retained center
+cache `nm7_20d7825bc607cd05` stays preserved, as do the downloaded scout results.
+
+The server manifest records Julia 1.12.1 and FuzzifiED_jll 1.0.3+0, while local
+analysis uses Julia 1.11.6 with a different JLL. Matrix-defining project/FuzzifiED
+source hashes match. Local work reads CSVs and computes q only; it does not generate
+N7 eigenvalues or replace the server's recorded cache identity with the local one.
+Do not update dependencies during this refinement.
+
+## Server commands: keep pull separate from submission
+
+Before pull, only select the saved branch and ensure the log directory exists:
 
 ```bash
+cd /public/home/ruiqixu/MottJainED/MottJainED-fast-ed
+git switch fast-ed-experiment
 mkdir -p slurm-logs
-export CONFIG=config/fast_ed/n7_uf0_165_k20_scout_restart.toml
+```
+
+Pull separately; repeat only this command on connection failures:
+
+```bash
+git pull --ff-only origin fast-ed-experiment
+```
+
+After a successful pull, submit only the refinement array (no prepare, dependency,
+or server collection job). Check that HEAD includes the refinement commit reported
+with this change before submitting:
+
+```bash
+export PROJECT_ROOT="$PWD"
+export CONFIG=config/fast_ed/n7_uf0_165_k20_refine.toml
 export THREADS=8
-PREP_RAW=$(sbatch --parsable --cpus-per-task=8 --export=ALL,FORCE_REBUILD=true slurm/fast_ed_prepare.sbatch)
-PREP=${PREP_RAW%%;*}
-printf '%s\n' "$PREP" > slurm-logs/last-n7-uf0165-prepare-job-id.txt
-SCOUT_RAW=$(sbatch --parsable --cpus-per-task=8 --array=0-19%4 --dependency=afterok:"$PREP" --export=ALL,FORCE_SOLVE=true slurm/fast_ed_sector_array.sbatch)
-SCOUT=${SCOUT_RAW%%;*}
-printf '%s\n' "$SCOUT" > slurm-logs/last-n7-uf0165-scout-job-id.txt
-squeue -j "$PREP,$SCOUT" -o '%.18i %.24j %.8T %.6C %.12M %R'
+N7_REFINE_RAW=$(sbatch --parsable --cpus-per-task=8 --array=0-27%4 --export=ALL,FORCE_SOLVE=false slurm/fast_ed_sector_array.sbatch)
+N7_REFINE=${N7_REFINE_RAW%%;*}
+printf '%s\n' "$N7_REFINE" | tee slurm-logs/last-n7-uf0165-refine-job-id.txt
+squeue -j "$N7_REFINE" -o '%.18i %.24j %.8T %.6C %.12M %R'
 ```
 
-Only scout depends on the single preparation job; its tasks start after preparation
-succeeds. Logs identify the config, task, mu/sector indices, threads and fresh-run
-flags immediately; Julia logs dependency loading, operator preparation, cache writes,
-matrix loading and the start of each eigensolve. Do not launch a second rebuild
-while any task for this point is still running.
+After completion, return the entire small directory
+`output/fast_ed/runs/n7_uf0_165_refine/`, its `mj-n7-sector-JOBID_*.out` logs and
+sacct resource statistics. Keep the cache on the server for any needed follow-up.
+No server summary is required; analysis is done locally from the raw CSV/TOML files.
 
-After all 20 array tasks are confirmed successful, collect explicitly:
+## Audit artifacts and validation
 
-```bash
-sbatch --export=ALL,CONFIG=config/fast_ed/n7_uf0_165_k20_scout_restart.toml slurm/fast_ed_collect.sbatch
-```
+Local derived files are under `output/fast_ed/analysis/n7_uf0_165_scout_548422/`:
+`scan_summary.csv`, `relations.csv`, `selected_states.csv`, per-mu merged spectra,
+`audit.toml`, `source_hashes.csv`, `resource_audit.json`, `resources.csv`, and the
+original pasted `sacct.txt`. Raw downloaded files are preserved. The recorded source
+hashes, complete per-sector ranks, metadata and independent five-gap reconstruction
+allow the numerical conclusions to be checked without transferring large matrices.
 
-Download `output/fast_ed/runs/n7_uf0_165_scout_restart/`, plus preparation/array
-logs and accounting statistics. It contains cache/settings-qualified
-`scan_summary.csv`, `best_summary.csv`, `best_relations.csv`, `best_spectrum.csv`,
-`collection_manifest.toml` and all per-mu small spectra. Do not download the large
-matrix cache. Return these scout results for review before scheduling refinement.
-The current profile forbids cache release; the retained cache and
-`n7_k20_plot_files.tar.gz` remain preserved.
+All 372 main-suite assertions pass. Profile regression tests check the unchanged
+Hamiltonian/cache/settings/score,
+seven new mu values at 0.00025 spacing, 28 tasks, an isolated result directory and
+review-before-acceptance/cache-release flags. Shell checks exercise all 28 task
+indices through the existing array script. No N7 ED is run locally.
 
-## Local validation
+## Retired workflow history
 
-358 main-suite assertions and eight N3 integration assertions passed locally.
-Slurm shell syntax and the mocked prepare/20-task launch checks also passed.
+Job 548331 used a serial-sector automatic optimizer and was cancelled. Its cache and
+small result directory were explicitly deleted before 548421 rebuilt the cache and
+548422 reran the five-point scout. That fresh-start request does not mean rebuilding
+the successful scout cache at each later mu refinement.
 
-The main suite verifies cached/direct spectrum equivalence, forced cache and result
-replacement, truncated-result rejection, the exact 20-task profile, and isolation
-from the retained center. A separate N3 integration runs fresh preparation, all 20
-sector solves and collection; it checks that the sampled minimum matches the N3
-guide and that the collection remains explicitly preliminary:
-
-```bash
-julia --startup-file=no --project=. test/runtests.jl
-JULIA_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1 \
-  julia --startup-file=no --project=. test/fast_ed_scout_restart_integration.jl
-```
-
-Shell launch checks use a mocked Julia executable to verify force flags, 8-thread
-environment and the five-by-four task mapping. These are not real Slurm runtime or
-performance measurements. No N7 ED is performed locally.
+Commits 589656e/097cc0f deviated from the old small staged scans: fixed 32-CPU workers,
+then fully serial 8-CPU execution, together with 9 local, 21 wide and 15 guard points
+and a 120-mu budget. Those operational entrypoints were removed in bf834b6. The
+historical FastMuSearch module/profile/test are not the active server path. The
+current path is the existing independent sector array used for the retained N7
+five-point scout and seven-point refinement.

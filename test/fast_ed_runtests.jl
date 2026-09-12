@@ -206,6 +206,29 @@ end
     @test all(isapprox.(diff(refine.mus), 0.00025; atol=1.0e-14, rtol=0.0))
 end
 
+@testset "Uf0=1.65 refinement preserves the completed scout cache and solver" begin
+    root = joinpath(@__DIR__, "..", "config", "fast_ed")
+    scout = FastED.load_spec(joinpath(root, "n7_uf0_165_k20_scout_restart.toml"))
+    refine = FastED.load_spec(joinpath(root, "n7_uf0_165_k20_refine.toml"))
+    @test refine.nm1 == 7 && refine.solver.k == 20
+    @test refine.cache_id == scout.cache_id
+    @test refine.cache_directory == scout.cache_directory
+    @test refine.settings_id == scout.settings_id
+    @test FastED.solver_dict(refine.solver) == FastED.solver_dict(scout.solver)
+    @test FastED.coupling_dict(refine.couplings; include_mu=false) ==
+          FastED.coupling_dict(scout.couplings; include_mu=false)
+    @test refine.terms == scout.terms && refine.metric == scout.metric
+    @test refine.run_name == "n7_uf0_165_refine" && refine.result_directory != scout.result_directory
+    @test refine.mus == [0.14425, 0.14450, 0.14475, 0.14500, 0.14525, 0.14550, 0.14575]
+    @test all(isapprox.(diff(refine.mus), 0.00025; atol=1e-14, rtol=0))
+    @test FastED.plan(refine).tasks == 28 && isempty(intersect(refine.mus, scout.mus))
+    @test all(first(refine.mus) < mu < last(refine.mus) for mu in
+              [0.14493829304945727, 0.1448838386844746, 0.14512072184094])
+    @test !haskey(refine.config, "mu_search") && !refine.config["fast_ed"]["allow_cache_release"]
+    @test refine.config["refinement"]["source_array_job"] == "548422" &&
+          refine.config["refinement"]["requires_review"] && !refine.config["refinement"]["muc_confirmed"]
+end
+
 @testset "Stage-12 guided local-FSS profiles" begin
     profile_root = joinpath(@__DIR__, "..", "config", "two_size_tuning")
     reference = TOML.parsefile(joinpath(profile_root, "s_stage12_vf_retained.toml"))

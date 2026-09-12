@@ -1,0 +1,55 @@
+# Seven-point refinement after the complete fresh scout (array 548422).
+# Use the matrices built by 548421; do not submit prepare or delete that cache.
+# Scout minimum: mu=0.14512072184094, q=0.10047138440566925.
+# Three-point fits to q and q^2 suggest 0.14493829 and 0.14488384.
+# These estimates only choose a grid; the final point must be actually computed.
+
+[model]
+nm1 = 7
+
+[hamiltonian]
+Uf = 0.46
+Uf0 = 1.65
+U0 = 4.14
+Vf = 0.0
+Vf0 = 0.55
+V0 = 0.34
+t = 0.5
+mu = 0.14500
+
+[solver]
+k = 20
+eig_tol = 1.0e-8
+energy_tol = 1.0e-7
+quantum_tol = 2.0e-3
+degeneracy_tol = 2.0e-6
+dense_cutoff = 128
+ncv_extra = 12
+warm_start = false
+
+[fast_ed]
+run_name = "n7_uf0_165_refine"
+cache_root = "output/fast_ed/cache"
+result_root = "output/fast_ed/runs"
+k = 20
+mus = [
+    0.14425,
+    0.14450,
+    0.14475,
+    0.14500,
+    0.14525,
+    0.14550,
+    0.14575,
+]
+score_terms = ["ds_s", "j", "curlj", "dj_rank1", "t_rank1"]
+score_metric = "q"
+allow_cache_release = false
+
+[refinement]
+source_scout_run = "n7_uf0_165_scout_restart"
+source_prepare_job = "548421"
+source_array_job = "548422"
+requires_review = true
+muc_confirmed = false
+# Inspect the fine-grid minimum, both sides, original state ranks and guide
+# branches before accepting muc. No automatic optimizer or next Hamiltonian.

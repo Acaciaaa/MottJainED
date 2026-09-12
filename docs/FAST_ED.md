@@ -180,21 +180,17 @@ output/two_size_tuning/n56_retained_local_vf0_01/
 及 `search/fss_optimize_evaluations.csv` 后，才安排第一个新 N=7 点。
 旧 `output/fast_ed/fss_n56_*` 的部分结果保留，但不会混入新流程。
 
-**2026-09-12 最新纠正：** 用户要求当前 Uf0=1.65、Vf0=0.55、V0=0.34 点全部重来，
-不复用作业 548331 的 cache 或谱。先停止 548331，再用
-`config/fast_ed/n7_uf0_165_k20_scout_restart.toml`：强制 prepare 重建当前点 cache，
-然后提交 `--array=0-19%4` 的五点 scout。prepare 与每个 sector 任务均为 8 CPU/线程；
-最多同时运行四个独立任务，各自结束释放资源。这恢复了已经完成的 retained N7 做法。
-新一轮任务共享本轮新建矩阵，不会重复逐 μ 建矩阵。中心 cache 与已完成 N56 不动。
+**2026-09-13 当前步骤：** Uf0=1.65、Vf0=0.55、V0=0.34 的新 scout 已下载，
+prepare 548421 与 20 个 sector 任务 548422 全部成功。建 cache 用时 13m51s，
+sector 任务各 5m34s–9m28s。五点最低采样值 μ=0.14512072、q=0.10047138，不能直接
+当成最终 muc。继续原方法七点精扫：`config/fast_ed/n7_uf0_165_k20_refine.toml`，
+μ 为 `0.14425:0.00025:0.14575`，`--array=0-27%4`，每任务 8 CPU/线程。
 
-已移除大范围自动搜索的 `slurm/fast_mu_search.sbatch` 和 `scripts/fast_mu_search.jl`。
-`589656e` 固定 32 CPU、`097cc0f` 全 sector 串行，以及自动增加大量 μ 搜索，均为已撤回
-的错误改动。不能把“不同 Hamiltonian 逐点执行”解释成“同一点所有 sector 也串行”。
-
-本轮只做五点 scout；结果明确标为待检查，不能直接把最低采样点称作真 muc。
-结果回来后再按原方法选小范围精扫，并按竞争分支和原始谱安排必要检查。
-使用该 scout profile 收集即可，完整命令见 [N7_MU_SEARCH.md](N7_MU_SEARCH.md)。
-通过下面的通用 audit 只代表数值完整与边界检查通过，不等于物理临界点认证。
+直接使用 548421 新建的 cache，不再 prepare、不删除 cache、不改底层求解器或五项 q。
+精扫结果独立保存在 `output/fast_ed/runs/n7_uf0_165_refine/`。用户要求原始小文件回传，
+不提交服务器 collect；本地分析实际谱、边界、五项 residual 和竞争分支后才接受结果。
+用户网络不稳定，命令必须拆成 pull 前、单独 pull、成功后提交三段。
+完整 scout 数据审计、资源记录与精扫提交方式见 [N7_MU_SEARCH.md](N7_MU_SEARCH.md)。
 
 N=7 阶段每次只处理一个新参数点。同一参数点收集后，可先运行只读审计：
 
