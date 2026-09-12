@@ -1,4 +1,4 @@
-# N=7 Uf0=1.65: completed scout and seven-point refinement
+# N=7 Uf0=1.65: two targeted follow-up points
 
 ## N=5/6 results audited on 2026-09-12
 
@@ -25,87 +25,92 @@ All five N6 searches had an unscored wide-Brent evaluation at `mu=0.0577864045`:
 curlJ raw rank 3 was absent even at k=30. An unscored point cannot be treated as
 evidence that q is large. Raw-rank conventions and the five score terms remain unchanged.
 
-## Current step: seven-point refinement (2026-09-13)
+## Current result: refinement 548498 is complete, muc is still under review
 
-The user downloaded the raw spectra and requested local analysis without a server
-collection job. Preparation 548421 and all 20 tasks of scout array 548422 completed
-with exit code 0:0. The cache manifest and 20 CSV/TOML pairs identify the intended
-Hamiltonian `(Uf,Uf0,U0,Vf,Vf0,V0,t)=(0.46,1.65,4.14,0,0.55,0.34,0.5)`.
-This is not the stage11 compromise with different Vf0/V0.
+All 28 tasks completed with exit code 0:0. The downloaded 28 CSV/TOML pairs contain
+560 states with complete per-sector ranks 1–20. Cache/settings identities,
+Hamiltonian, source hashes, solver settings, dimensions and eight-thread metadata
+match the successful scout. Local Julia scoring and an independent Python raw-gap
+reconstruction agree exactly at the saved precision.
 
-| Scout mu | q | DeltaS | DeltaO |
+| Fine-grid mu | q | DeltaS | DeltaO |
 |---:|---:|---:|---:|
-| 0.13512072184094 | 0.23075022 | 1.57561738 | 3.16332619 |
-| 0.14012072184094 | 0.18052423 | 1.41758253 | 2.90544710 |
-| 0.14512072184094 | 0.10047138 | 1.75819320 | 2.81800020 |
-| 0.15012072184094 | 0.19312703 | 2.05289253 | 2.79942730 |
-| 0.15512072184094 | 0.27789490 | 2.25381571 | 2.80376954 |
+| 0.14425 | 0.09688635 | 1.69646420 | 2.82596127 |
+| 0.14450 | 0.09698241 | 1.71441985 | 2.82346000 |
+| 0.14475 | 0.09785799 | 1.73219906 | 2.82113748 |
+| 0.14500 | 0.09945872 | 1.74978007 | 2.81898320 |
+| 0.14525 | 0.10171605 | 1.76714455 | 2.81698725 |
+| 0.14550 | 0.10455334 | 1.78427728 | 2.81514030 |
+| 0.14575 | 0.10789152 | 1.80116575 | 2.81343359 |
 
-All five points contain 80 states and all five q relations. All 20 CSV/TOML pairs
-pass identity, complete-rank, solver-setting and dimension checks; independent
-Python reconstruction agrees with the Julia q/factor/DeltaS/O values exactly at the
-saved precision. Maximum quantum-number rounding error is 2.50e-10, and the largest
-lowest-multiplet copy splitting is 4.80e-14. Scoring uses the existing
-raw-rank convention: S raw rank 2, J raw rank 1, curlJ raw rank 3 (the second distinct
-multiplet), dJ raw rank 1, and T raw rank 1. No deduplication precedes this scoring.
-The largest required sector rank over the scout is 13; at its best sampled point it
-is 9. Cold k=20 starts, eigensolver tolerances and the five score terms stay unchanged.
+The best sampled mu is the fine grid's left endpoint. The older scout has a higher
+q at 0.14012072, but this leaves a large gap to the fine grid. Do not accept the
+endpoint or move to another Hamiltonian yet. The five-point scout's quadratic
+estimate near 0.1449 was too far right for the chosen fine interval.
 
-The sampled minimum is interior. Fits through its two neighboring points estimate
-mu=0.14493829 from q and 0.14488384 from q squared. These are only guides for choosing
-the next grid. The existing N3/N4 full-grid and N5/N6 local/wide checks at this same
-Hamiltonian select the continuation branch leading toward this neighborhood; they do
-not prove that N7 has no unsampled competing branch. In particular, an old minimum
-near 0.10 at different couplings must not be transplanted to this point.
+Using the first three fine points, quadratic fits to q and q squared estimate
+0.14434419 and 0.14434436. These estimates choose two new evaluations; neither is
+a measured muc. The current provisional best has factor 0.02574342076446387;
+its five scaled gaps are [1.04183428, 2.09844000, 3.07383779, 2.82770493, 3.01888586].
 
-Use `config/fast_ed/n7_uf0_165_k20_refine.toml` to compute exactly:
+All seven ground states are singlets in (+,+). Fixed score ranks remain unchanged:
+S raw rank 2, dS rank 1, J rank 1, curlJ raw rank 3, dJ rank 1 and T rank 1. J and
+curlJ each have their expected pair of symmetry copies; switching the lowest copy
+between Z/R sectors at machine precision is not evidence of a physical branch change.
+The maximum required sector rank is 9. The largest quantum-number rounding error is
+2.92e-10 and lowest-multiplet copy splitting is 4.89e-14. The factor and selected
+gaps vary smoothly over the fine grid. Only one distinct O multiplet is visible;
+these files cannot establish overlap continuity or exclude crossings with a higher O.
 
-```text
-0.14425, 0.14450, 0.14475, 0.14500, 0.14525, 0.14550, 0.14575
-```
+## Next calculation: only mu=0.14400 and 0.144375
 
-The spacing is 0.00025, as in the completed retained-N7 refinement. All seven values
-are new. After receiving these results, compare the actual minimum and both sides,
-five residuals, factor, scalar ordering, lowest O and the scout/guide branches. A
-boundary minimum, discontinuity, missing level or conflicting branch calls for
-specific additional points; do not automatically launch a broad optimizer. Do not
-report an interpolated estimate as a measured muc or a proven critical point.
-The raw scout includes only the lowest O multiplet's two copies, so it does not
-establish continuity of a second, higher O level.
+Use `config/fast_ed/n7_uf0_165_k20_followup.toml`:
 
-## Resources: measured scout and unchanged next-run settings
+- 0.14400 checks whether q rises on the left of the current fine interval.
+- 0.144375 samples close to the new estimated minimum, between existing 0.14425
+  and 0.14450. Those existing neighbors give a 0.000125 local spacing.
+- Two new mu values times four sectors means eight tasks, `--array=0-7%4`.
+- Reuse the cache built by 548421, `output/fast_ed/cache/nm7_aaa8ccb4a8dd9fef`.
+  No prepare, forced recalculation, dependency change or cache deletion is needed.
+- Each independent task uses 8 CPUs/threads, BLAS 1; at most four run together.
+  Hamiltonian, cold k=20 solver and five score terms are unchanged.
+- Save results separately in `output/fast_ed/runs/n7_uf0_165_followup/`.
+
+Review the new raw spectra **together with** the completed scout and seven-point
+refinement. A two-point file alone cannot have an interior minimum. Check both
+sides of the combined local minimum, fixed ranks, residuals, factor and S/O before
+accepting an actual sampled mu. All profiles retain `allow_cache_release=false`.
+No server collect job is requested; download the eight CSV/TOML pairs and logs.
+
+The same-parameter N3/N4 guides and N5/N6 local/wide searches support the continuation
+branch, but are not a global-minimum proof for N7. A boundary or conflicting branch
+in the combined data calls for targeted review, not an automatic broad optimizer.
+After this point passes review, the next planned Hamiltonian is Uf0=2.00 at
+Vf0=0.55, V0=0.34. Later come Vf0=0.45 and 0.65 at Uf0=1.834. Generate and run one
+Hamiltonian at a time; preserve the completed retained-center cache and results.
+
+## Resources measured for 548498
 
 | Measurement | Result |
 |---|---:|
-| Preparation elapsed / MaxRSS | 13m51s / 22.99 GiB |
-| Sector task elapsed range / median | 5m34s–9m28s / 6m50s |
-| Largest sector-task MaxRSS | 14.13 GiB |
-| Scout span, first task start to last task end | about 38m43s |
-| Preparation start to last scout task end | about 52m34s |
-| Scout allocated CPU hours / actual CPU hours | 18.6822 / 6.1280 |
+| Task elapsed range / median | 5m55s–8m44s / 6m31s |
+| Largest MaxRSS | 15.28 GiB |
+| First task start to estimated last task end | 53m35s |
+| Allocated / actual CPU hours | 25.8800 / 8.6888 |
+| CPU utilization of allocations | 33.57% |
 
-Spans use the log start timestamps and sacct elapsed times; they exclude queue time
-before preparation and are not a guaranteed runtime for refinement. Scout CPU
-utilization averaged 32.80% of the 8-CPU task allocations. No new thread-count tuning
-has been measured, so preserve the requested and previously validated 8-thread setup.
+The span uses log start timestamps plus sacct elapsed times; it excludes queue time
+before the first task. For eight similar tasks with four concurrent slots, allow
+roughly 12–20 minutes of execution plus queue/I/O delays; this is an estimate, not a
+guarantee. Preserve the validated 8-CPU setup; no new thread-count benchmark was run.
 
-Keep the matrices freshly built by 548421. The server cache is
-`output/fast_ed/cache/nm7_aaa8ccb4a8dd9fef`; refinement's unchanged Hamiltonian,
-source and solver definitions retain the same cache/settings identities. Do not
-prepare again, delete this cache, or use FORCE_SOLVE=true for normal continuation.
-The 28 independent tasks each request 8 CPUs/threads, BLAS 1, with at most four
-simultaneous tasks. Each exits and releases its own allocation. The retained center
-cache `nm7_20d7825bc607cd05` stays preserved, as do the downloaded scout results.
+Server Julia is 1.12.1 with FuzzifiED_jll 1.0.3+0; local scoring uses Julia 1.11.6
+and a different JLL. Project/FuzzifiED matrix-source hashes match. Local analysis
+reads the spectra only and preserves the server's recorded cache identity.
 
-The server manifest records Julia 1.12.1 and FuzzifiED_jll 1.0.3+0, while local
-analysis uses Julia 1.11.6 with a different JLL. Matrix-defining project/FuzzifiED
-source hashes match. Local work reads CSVs and computes q only; it does not generate
-N7 eigenvalues or replace the server's recorded cache identity with the local one.
-Do not update dependencies during this refinement.
+## Server commands: pull separately, then submit once
 
-## Server commands: keep pull separate from submission
-
-Before pull, only select the saved branch and ensure the log directory exists:
+Before pull:
 
 ```bash
 cd /public/home/ruiqixu/MottJainED/MottJainED-fast-ed
@@ -113,45 +118,55 @@ git switch fast-ed-experiment
 mkdir -p slurm-logs
 ```
 
-Pull separately; repeat only this command on connection failures:
+Pull separately; retry only this command on connection failures:
 
 ```bash
+cd /public/home/ruiqixu/MottJainED/MottJainED-fast-ed
 git pull --ff-only origin fast-ed-experiment
 ```
 
-After a successful pull, submit only the refinement array (no prepare, dependency,
-or server collection job). Check that HEAD includes the refinement commit reported
-with this change before submitting:
+After successful pull, verify HEAD includes the commit reported with this change,
+then submit only the follow-up array:
 
 ```bash
+(
+set -euo pipefail
+cd /public/home/ruiqixu/MottJainED/MottJainED-fast-ed
+test -s config/fast_ed/n7_uf0_165_k20_followup.toml
+[ -z "$(squeue -h -u "$USER")" ] || { echo '队列中已有任务，未重复提交。'; exit 1; }
+CACHE_DIR=output/fast_ed/cache/nm7_aaa8ccb4a8dd9fef
+for part in zpos_rpos zpos_rneg zneg_rpos zneg_rneg; do
+    test -s "$CACHE_DIR/$part.jld2" || { echo "缺少 cache：$part，停止提交。"; exit 1; }
+done
+mkdir -p slurm-logs
 export PROJECT_ROOT="$PWD"
-export CONFIG=config/fast_ed/n7_uf0_165_k20_refine.toml
+export CONFIG=config/fast_ed/n7_uf0_165_k20_followup.toml
 export THREADS=8
-N7_REFINE_RAW=$(sbatch --parsable --cpus-per-task=8 --array=0-27%4 --export=ALL,FORCE_SOLVE=false slurm/fast_ed_sector_array.sbatch)
-N7_REFINE=${N7_REFINE_RAW%%;*}
-printf '%s\n' "$N7_REFINE" | tee slurm-logs/last-n7-uf0165-refine-job-id.txt
-squeue -j "$N7_REFINE" -o '%.18i %.24j %.8T %.6C %.12M %R'
+N7_FOLLOWUP_RAW=$(sbatch --parsable --cpus-per-task=8 --array=0-7%4 --export=ALL,FORCE_SOLVE=false slurm/fast_ed_sector_array.sbatch)
+N7_FOLLOWUP=${N7_FOLLOWUP_RAW%%;*}
+printf '%s\n' "$N7_FOLLOWUP" | tee slurm-logs/last-n7-uf0165-followup-job-id.txt
+squeue -j "$N7_FOLLOWUP" -o '%.18i %.24j %.8T %.6C %.12M %R'
+)
 ```
 
-After completion, return the entire small directory
-`output/fast_ed/runs/n7_uf0_165_refine/`, its `mj-n7-sector-JOBID_*.out` logs and
-sacct resource statistics. Keep the cache on the server for any needed follow-up.
-No server summary is required; analysis is done locally from the raw CSV/TOML files.
+After completion, return `output/fast_ed/runs/n7_uf0_165_followup/`, the eight
+`mj-n7-sector-JOBID_*.out` logs, and sacct statistics. Keep the matrices on the server.
 
-## Audit artifacts and validation
+## Local audit artifacts
 
-Local derived files are under `output/fast_ed/analysis/n7_uf0_165_scout_548422/`:
-`scan_summary.csv`, `relations.csv`, `selected_states.csv`, per-mu merged spectra,
-`audit.toml`, `source_hashes.csv`, `resource_audit.json`, `resources.csv`, and the
-original pasted `sacct.txt`. Raw downloaded files are preserved. The recorded source
-hashes, complete per-sector ranks, metadata and independent five-gap reconstruction
-allow the numerical conclusions to be checked without transferring large matrices.
+`output/fast_ed/analysis/n7_uf0_165_refine_548498/` contains the reproducible Julia
+scoring script, independent Python check, resource/census check, seven-point and
+combined twelve-point score tables, per-relation and selected-state tables, merged
+spectra, raw-file SHA-256 hashes, `audit.toml`, resource statistics and original
+`sacct.txt`. Its `best_sampled.csv` is provisional: `muc_confirmed=false` and
+`requires_targeted_followup=true`. No N7 diagonalization was run locally.
 
-All 372 main-suite assertions pass. Profile regression tests check the unchanged
-Hamiltonian/cache/settings/score,
-seven new mu values at 0.00025 spacing, 28 tasks, an isolated result directory and
-review-before-acceptance/cache-release flags. Shell checks exercise all 28 task
-indices through the existing array script. No N7 ED is run locally.
+The follow-up profile was loaded through FastED and checked against the completed
+refinement: cache identity, solver settings, Hamiltonian and score agree; its two
+mu values are new and its result directory is separate. All eight task mappings
+were exercised through the existing Slurm script using a mock Julia executable;
+they invoke only solve with eight threads and BLAS 1. Submission shell syntax and
+the Git diff whitespace check pass. No solver or Slurm code changed.
 
 ## Retired workflow history
 

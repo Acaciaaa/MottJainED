@@ -1,0 +1,48 @@
+# Two new mu values after array 548498's seven-point refinement.
+# Its best sampled mu=0.14425 is at the fine-grid left edge.
+# The first three fine points estimate a minimum near 0.144344 (not a result).
+# 0.14400 checks the left side; 0.144375 samples near that estimated minimum.
+# Reuse cache built by 548421 and review together with both completed runs.
+
+[model]
+nm1 = 7
+
+[hamiltonian]
+Uf = 0.46
+Uf0 = 1.65
+U0 = 4.14
+Vf = 0.0
+Vf0 = 0.55
+V0 = 0.34
+t = 0.5
+mu = 0.144375
+
+[solver]
+k = 20
+eig_tol = 1.0e-8
+energy_tol = 1.0e-7
+quantum_tol = 2.0e-3
+degeneracy_tol = 2.0e-6
+dense_cutoff = 128
+ncv_extra = 12
+warm_start = false
+
+[fast_ed]
+run_name = "n7_uf0_165_followup"
+cache_root = "output/fast_ed/cache"
+result_root = "output/fast_ed/runs"
+k = 20
+mus = [0.14400, 0.144375]
+score_terms = ["ds_s", "j", "curlj", "dj_rank1", "t_rank1"]
+score_metric = "q"
+allow_cache_release = false
+
+[refinement]
+source_scout_run = "n7_uf0_165_scout_restart"
+source_refine_run = "n7_uf0_165_refine"
+source_prepare_job = "548421"
+source_array_job = "548498"
+requires_review = true
+muc_confirmed = false
+# This two-point run cannot bracket a minimum by itself. Merge its raw spectra
+# with the existing scout/refinement locally before reviewing the minimum.
