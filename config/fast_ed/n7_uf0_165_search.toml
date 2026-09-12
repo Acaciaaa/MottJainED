@@ -1,0 +1,55 @@
+# First new N=7 Hamiltonian. N=5/6 results audited on 2026-09-12.
+# Uf0=1.65 at fixed Vf0=0.55,V0=0.34 (not the old stage11 compromise).
+[model]
+nm1 = 7
+
+[hamiltonian]
+Uf = 0.46
+Uf0 = 1.65
+U0 = 4.14
+Vf = 0.0
+Vf0 = 0.55
+V0 = 0.34
+t = 0.5
+mu = 0.14320460558017
+
+[solver]
+k = 20
+eig_tol = 1.0e-8
+energy_tol = 1.0e-7
+quantum_tol = 2.0e-3
+degeneracy_tol = 2.0e-6
+dense_cutoff = 128
+ncv_extra = 12
+warm_start = false
+
+[fast_ed]
+run_name = "n7_uf0_165_search"
+cache_root = "output/fast_ed/cache"
+result_root = "output/fast_ed/runs"
+k = 20
+mus = [0.14320460558017]
+score_terms = ["ds_s", "j", "curlj", "dj_rank1", "t_rank1"]
+score_metric = "q"
+allow_cache_release = false
+
+[mu_search]
+# N3=0.10853896038463, N4=0.13537251915897;
+# N5=0.14128848931940, N6=0.14320460558017. Extrapolation is only a guide.
+seed_mu = 0.14320460558017
+local_half_width = 0.02
+local_count = 9
+# Independent full-range coarse discovery, then finer coverage of the critical region.
+mu_min = -0.095
+mu_max = 0.305
+wide_count = 21
+guard_min = 0.095
+guard_max = 0.165
+guard_count = 15
+mu_abs_tol = 2.0e-5
+max_iterations = 100
+max_evaluations = 120
+mu_agreement_tol = 0.00025
+q_agreement_tol = 0.0001
+neighbor_step = 0.00025
+cold_repeat_tol = 1.0e-5

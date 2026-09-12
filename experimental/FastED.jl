@@ -381,8 +381,15 @@ function result_is_current(path::AbstractString, spec, mu::Real, z::Integer, r::
     try
         data = CSV.read(path, DataFrame)
         nrow(data) > 0 || return false
+        dimension = Int(data.sector_dimension[1])
+        expected = dimension <= spec.solver.dense_cutoff ? min(spec.solver.k, dimension) :
+                   min(spec.solver.k, dimension - 2)
+        sort(Int.(data.rank)) == collect(1:expected) || return false
+        all(isfinite, data.energy) && all(isfinite, data.l2) && all(isfinite, data.c2) || return false
         return all(String.(data.cache_id) .== spec.cache_id) &&
                all(String.(data.settings_id) .== spec.settings_id) &&
+               all(Int.(data.nm1) .== spec.nm1) && all(Int.(data.k) .== spec.solver.k) &&
+               all(Int.(data.sector_dimension) .== dimension) &&
                all(isapprox.(Float64.(data.mu), Float64(mu); atol=0.0, rtol=0.0)) &&
                all(Int.(data.z) .== z) && all(Int.(data.r) .== r)
     catch
@@ -390,16 +397,10 @@ function result_is_current(path::AbstractString, spec, mu::Real, z::Integer, r::
     end
 end
 
-function solve_sector(spec, mu::Real, sector_index::Integer; force::Bool=false)
-    isfinite(mu) || throw(ArgumentError("mu must be finite"))
+"""Load one sector once for a sequence of μ values, without keeping eigenvectors."""
+function load_sector_solver(spec, sector_index::Integer)
     _, entry = manifest_sector(spec, sector_index)
     z, r = Int(entry["z"]), Int(entry["r"])
-    output = sector_result_path(spec, mu, z, r)
-    if !force && result_is_current(output, spec, mu, z, r)
-        @info "reusing completed sector result" mu z r output
-        return output
-    end
-
     cache_path = joinpath(spec.cache_directory, String(entry["file"]))
     data = validate_cache_data(JLD2.load(cache_path), spec, z, r)
     sector = MottJainED.SectorCache(
@@ -411,6 +412,24 @@ function solve_sector(spec, mu::Real, sector_index::Integer; force::Bool=false)
         MottJainED.hermitian_opmat(data["c2"]),
         Float64[],
     )
+    return (sector=sector, dimension=Int(data["dimension"]), cache_path=cache_path,
+            cache_id=spec.cache_id, sector_index=Int(sector_index), z=z, r=r)
+end
+
+function solve_sector(spec, mu::Real, sector_index::Integer; force::Bool=false, resident=nothing)
+    isfinite(mu) || throw(ArgumentError("mu must be finite"))
+    _, entry = manifest_sector(spec, sector_index)
+    z, r = Int(entry["z"]), Int(entry["r"])
+    output = sector_result_path(spec, mu, z, r)
+    if !force && result_is_current(output, spec, mu, z, r)
+        @info "reusing completed sector result" mu z r output
+        return output
+    end
+    loaded = resident === nothing ? load_sector_solver(spec, sector_index) : resident
+    loaded.cache_id == spec.cache_id && loaded.sector_index == sector_index &&
+        loaded.z == z && loaded.r == r || throw(ArgumentError("Resident sector identity mismatch"))
+    sector = loaded.sector
+    cache_path = loaded.cache_path
     started = time()
     energies, vectors = MottJainED._eigensystem(sector, Float64(mu), spec.solver)
     order = sortperm(energies)
@@ -440,7 +459,7 @@ function solve_sector(spec, mu::Real, sector_index::Integer; force::Bool=false)
         energy=Float64(energies[rank]),
         l2=Float64(real(dot(vectors[:, rank], sector.l2 * vectors[:, rank]))),
         c2=Float64(real(dot(vectors[:, rank], sector.c2 * vectors[:, rank]))),
-        sector_dimension=Int(data["dimension"]),
+        sector_dimension=loaded.dimension,
         k=spec.solver.k,
         eig_tol=spec.solver.eig_tol,
         solve_seconds=solve_seconds,
@@ -457,7 +476,7 @@ function solve_sector(spec, mu::Real, sector_index::Integer; force::Bool=false)
         "z" => z,
         "r" => r,
         "states" => length(energies),
-        "sector_dimension" => Int(data["dimension"]),
+        "sector_dimension" => loaded.dimension,
         "solve_seconds" => solve_seconds,
         "julia_threads" => Threads.nthreads(),
         "solver" => solver_dict(spec.solver),

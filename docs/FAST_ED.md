@@ -157,7 +157,7 @@ Uf0 三个点与 Vf0 两个端点作为两个独立 Slurm array task，各用 8 
 中心 `(Uf0,Vf0)=(1.834,0.55)` 只在 Uf0 任务计算一次，随后给两条曲线共用。
 合计 5 个唯一 Hamiltonian 点、10 行 N=5/6 结果；含 guide 时为 20 行。
 
-从正确实验工作树提交（旧作业 547102 需由用户取消；保留其旧输出）：
+以下是 N=5/6 阶段的提交入口（2026-09-12 已下载完整结果并通过审计，无需重算）：
 
 ```bash
 mkdir -p slurm-logs
@@ -177,6 +177,17 @@ output/two_size_tuning/n56_retained_local_vf0_01/
 下载两个完整小目录，检查 `two_size_matching.csv`、`search/fss_optimize_results.csv`
 及 `search/fss_optimize_evaluations.csv` 后，才安排第一个新 N=7 点。
 旧 `output/fast_ed/fss_n56_*` 的部分结果保留，但不会混入新流程。
+
+**2026-09-12 当前入口：** 第一个新 N=7 点 `Uf0=1.65,Vf0=0.55,V0=0.34` 已准备好。
+使用 `sbatch slurm/fast_mu_search.sbatch`，在同一节点用四个常驻 sector 进程、各 8 线程，
+复用矩阵 cache 和完整 μ 结果。搜索从该点 N6 的 μ 出发，独立宽网格和临界区域细网格
+检查竞争谷底，最后双侧精修与冷启动重算。只运行这一个参数点，不自动释放 cache。
+完整数据分析、搜索判据、资源和输出说明见 [N7_MU_SEARCH.md](N7_MU_SEARCH.md)。
+
+动态搜索会生成列出所有实际 μ 的 `evaluated_profile.toml`。下面的通用 audit/collection
+流程应使用该文件，不能使用只含 seed 的原始输入 profile 覆盖完整扫描摘要。若全范围
+存在无法打分的点，通用 audit 仍会拒绝，必须先审查这些覆盖缺口；局部搜索通过不等于
+可以跳过审计并释放 cache。
 
 N=7 阶段每次只处理一个新参数点。同一参数点收集后，可先运行只读审计：
 
