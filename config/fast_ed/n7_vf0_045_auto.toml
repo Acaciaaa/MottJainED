@@ -79,5 +79,13 @@ solve_threads = 8
 max_concurrent = 4
 control_cpus = 1
 
+# The bootstrap job verifies these exact completed-cache identities before
+# releasing them. Missing caches are harmless; the retained-center cache is
+# protected independently by the retirement command.
+retire_before_start = [
+    "config/fast_ed/n7_uf0_165_cache_retirement.toml",
+    "config/fast_ed/n7_uf0_200_cache_retirement.toml",
+]
+
 # Keep this cache until its final archive has been downloaded and audited.
 auto_release = false

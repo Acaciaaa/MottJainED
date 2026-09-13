@@ -59,20 +59,13 @@ live状态只在归档SHA验证后才原子更新为`complete`并记录实际SHA
 
 ## 服务器入口
 
-Uf0=2.00最终包已在本地逐文件核验，服务器cache ID为`ce74ad933acda136`。确保队列为空后，
-用受控命令检查并释放它的约25 GiB cache；命令要求手工输入精确ID、核对完整manifest，
-并保护retained中心cache：
+Uf0=2.00最终包已在本地逐文件核验，服务器cache ID为`ce74ad933acda136`。Vf0=0.45配置
+列出已经核验过的旧cache retirement profiles。用户入口先用纯shell检查队列并只提交一个
+1 CPU bootstrap；bootstrap在计算节点完成Julia预编译、旧cache的ID/完整manifest核验与释放，
+然后启动prepare、scout和后续controller。登录节点不再启动Julia，也不需要手工执行cache检查。
+retained中心cache仍由底层命令独立保护。
 
-```bash
-julia --startup-file=no --project=. scripts/fast_ed_pipeline.jl inspect-cache \
-  --config=config/fast_ed/n7_uf0_200_cache_retirement.toml
-
-julia --startup-file=no --project=. scripts/fast_ed_pipeline.jl retire-cache \
-  --config=config/fast_ed/n7_uf0_200_cache_retirement.toml \
-  --confirm-cache-id=ce74ad933acda136
-```
-
-随后一次启动整个Vf0=0.45流程。该点N5/N6为
+该点N5/N6为
 `mu=0.14661203561809/0.15079875116308`，阻尼中心`0.152892108935575`，首次五点范围为
 `0.142892108935575–0.162892108935575`：
 

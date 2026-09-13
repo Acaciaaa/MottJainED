@@ -58,6 +58,46 @@ function inspect_cache(path)
                   spec.cache_directory))
 end
 
+function retire_configured_caches(path)
+    config = TOML.parsefile(path)
+    pipeline = get(config, "pipeline", nothing)
+    pipeline isa AbstractDict || throw(ArgumentError("Profile must define [pipeline]"))
+    configured = get(pipeline, "retire_before_start", Any[])
+    configured isa AbstractVector || throw(ArgumentError(
+        "pipeline.retire_before_start must be an array of retirement profiles",
+    ))
+
+    for entry in configured
+        retirement_path = project_path(String(entry))
+        spec = FastED.load_spec(retirement_path)
+        retirement = get(spec.config, "cache_retirement", nothing)
+        retirement isa AbstractDict || throw(ArgumentError(
+            "Configured cleanup is not an approved cache-retirement profile: $retirement_path",
+        ))
+        expected = String(retirement["expected_cache_id"])
+        expected == spec.cache_id || throw(ArgumentError(
+            "Configured cleanup identity does not match its retirement profile: $retirement_path",
+        ))
+
+        if !isdir(spec.cache_directory)
+            print_fields(("cache_absent", expected, spec.cache_directory))
+            continue
+        end
+        manifest_path = FastED.cache_manifest_path(spec)
+        isfile(manifest_path) || throw(ArgumentError(
+            "Configured cleanup cache has no manifest: $(spec.cache_directory)",
+        ))
+        manifest = TOML.parsefile(manifest_path)
+        Bool(get(manifest, "complete", false)) || throw(ArgumentError(
+            "Configured cleanup cache is incomplete: $(spec.cache_directory)",
+        ))
+        String(get(manifest, "cache_id", "")) == expected || throw(ArgumentError(
+            "Configured cleanup cache manifest identity mismatch: $(spec.cache_directory)",
+        ))
+        retire_cache(retirement_path, Dict("confirm-cache-id" => expected))
+    end
+end
+
 function retire_cache(path, options)
     spec = FastED.load_spec(path)
     retirement = get(spec.config, "cache_retirement", nothing)
@@ -115,6 +155,7 @@ Usage:
   julia --project=. scripts/fast_ed_pipeline.jl mark-bundled --config=PROFILE --archive=PATH --sha256=HEX
   julia --project=. scripts/fast_ed_pipeline.jl inspect-cache --config=PROFILE
   julia --project=. scripts/fast_ed_pipeline.jl retire-cache --config=PROFILE --confirm-cache-id=ID
+  julia --project=. scripts/fast_ed_pipeline.jl retire-configured-caches --config=PIPELINE_PROFILE
 
 Machine-readable action and resource commands print tab-separated fields.
 """)
@@ -164,6 +205,8 @@ elseif command == "inspect-cache"
     inspect_cache(path)
 elseif command == "retire-cache"
     retire_cache(path, options)
+elseif command == "retire-configured-caches"
+    retire_configured_caches(path)
 else
     usage()
     throw(ArgumentError("Unknown command '$command'"))

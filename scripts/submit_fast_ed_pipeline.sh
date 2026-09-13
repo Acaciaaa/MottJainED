@@ -16,6 +16,27 @@ BASE_CONFIG="$1"
 cd "$PROJECT_ROOT"
 mkdir -p slurm-logs
 
+# Keep Julia package loading and any required precompilation off the login
+# node. The one-CPU bootstrap performs cleanup and the existing bounded launch,
+# then exits; all ED work remains in its separately sized Slurm jobs.
+if [[ -z "${SLURM_JOB_ID:-}" ]]; then
+    if ! queued_jobs=$(squeue -h -u "$USER"); then
+        echo "could not read the user queue; no pipeline was submitted" >&2
+        exit 2
+    fi
+    if [[ -n "$queued_jobs" ]]; then
+        echo "the user queue is not empty; no pipeline was submitted" >&2
+        exit 2
+    fi
+    bootstrap_raw=$(sbatch --parsable \
+        --export="ALL,PROJECT_ROOT=$PROJECT_ROOT,BASE_CONFIG=$BASE_CONFIG" \
+        slurm/fast_ed_pipeline_bootstrap.sbatch)
+    bootstrap_job="${bootstrap_raw%%;*}"
+    printf 'bootstrap=%s\n' "$bootstrap_job"
+    printf 'cleanup and launch now run in a one-CPU Slurm bootstrap\n'
+    exit 0
+fi
+
 pipeline_cli=(julia --startup-file=no --project=. scripts/fast_ed_pipeline.jl)
 "${pipeline_cli[@]}" init --config="$BASE_CONFIG" >/dev/null
 IFS=$'\t' read -r current_action initial_config initial_tasks state_path \

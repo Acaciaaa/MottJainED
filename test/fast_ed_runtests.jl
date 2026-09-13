@@ -180,6 +180,11 @@ end
     @test next_opt.n5_q == 0.21819656826690698
     @test next_opt.n6_delta_o == 3.0438948900444003
     @test next.cache_id != pilot.cache_id
+    next_config = TOML.parsefile(next_path)
+    @test next_config["pipeline"]["retire_before_start"] == [
+        "config/fast_ed/n7_uf0_165_cache_retirement.toml",
+        "config/fast_ed/n7_uf0_200_cache_retirement.toml",
+    ]
 
     pending = Dict{String,Any}(
         "action" => "bundle", "complete" => false, "accepted" => true,
@@ -329,12 +334,18 @@ end
     end
 
     launcher = read(joinpath(root, "scripts", "submit_fast_ed_pipeline.sh"), String)
+    bootstrap = read(joinpath(root, "slurm", "fast_ed_pipeline_bootstrap.sbatch"), String)
     controller = read(joinpath(root, "slurm", "fast_ed_pipeline_controller.sbatch"), String)
+    cli = read(joinpath(root, "scripts", "fast_ed_pipeline.jl"), String)
     @test occursin(raw"%${max_concurrent}", launcher)
     @test occursin(raw"afterany:$solve_job", launcher)
+    @test occursin("fast_ed_pipeline_bootstrap.sbatch", launcher)
+    @test occursin("retire-configured-caches", bootstrap)
+    @test occursin("JULIA_NUM_PRECOMPILE_TASKS=1", bootstrap)
+    @test occursin("retire-configured-caches", cli)
     @test occursin(raw"%${max_concurrent}", controller)
     @test occursin(raw"afterany:$solve_job", controller)
-    @test !occursin("sleep ", launcher*controller)
+    @test !occursin("sleep ", launcher*bootstrap*controller)
 end
 
 @testset "Fresh N7 five-point scout uses the validated array workflow" begin

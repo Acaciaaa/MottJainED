@@ -238,7 +238,9 @@ Uf0=2.00 pilot已完成并通过本地raw审计，接受实测`mu=0.145125`、
 `q=0.07326351956935973`。下一点使用
 `config/fast_ed/n7_vf0_045_auto.toml`计算`Uf0=1.834,Vf0=0.45,V0=0.34`；N5/N6阻尼
 延拓中心为`0.152892108935575`。仍是一点一cache、每个sector任务8CPU/8线程、最多四个
-并发，完成后只下载最终tar.gz和sha256。
+并发，完成后只下载最终tar.gz和sha256。启动脚本在登录节点只检查空队列并提交一个1 CPU
+bootstrap；Julia加载/预编译、旧cache核验与受控清理、流水线初始化都在bootstrap allocation
+内完成。
 
 Uf0=2.00的服务器cache只有在本地归档SHA
 `bedb6a2f9d444be294fff1d6f3753ba42b7dbf326df3bcd269e6f211f718ae36`已经核验、队列为空，
