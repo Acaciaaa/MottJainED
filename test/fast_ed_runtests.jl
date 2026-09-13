@@ -1,5 +1,6 @@
 using Test
 using TOML
+using SHA
 using MottJainED
 
 include(joinpath(@__DIR__, "..", "experimental", "FastED.jl"))
@@ -135,6 +136,8 @@ end
     root = joinpath(@__DIR__, "..")
     pilot_path = joinpath(root, "config", "fast_ed", "n7_uf0_200_auto.toml")
     retirement_path = joinpath(root, "config", "fast_ed", "n7_uf0_165_cache_retirement.toml")
+    completed_retirement_path = joinpath(root, "config", "fast_ed", "n7_uf0_200_cache_retirement.toml")
+    next_path = joinpath(root, "config", "fast_ed", "n7_vf0_045_auto.toml")
     pilot = FastED.load_spec(pilot_path)
     opt = FastEDPipeline.pipeline_options(pilot)
 
@@ -156,6 +159,40 @@ end
     @test retirement_config["cache_retirement"]["expected_cache_id"] == "aaa8ccb4a8dd9fef"
     @test retirement.cache_id == prior_scout.cache_id
     @test retirement.cache_id != pilot.cache_id
+
+    completed_retirement = FastED.load_spec(completed_retirement_path)
+    completed_retirement_config = TOML.parsefile(completed_retirement_path)
+    @test completed_retirement.cache_id == pilot.cache_id
+    @test completed_retirement_config["cache_retirement"]["expected_cache_id"] ==
+          "ce74ad933acda136"
+    @test completed_retirement_config["cache_retirement"]["verified_local_archive_sha256"] ==
+          "bedb6a2f9d444be294fff1d6f3753ba42b7dbf326df3bcd269e6f211f718ae36"
+
+    next = FastED.load_spec(next_path)
+    next_opt = FastEDPipeline.pipeline_options(next)
+    next_damped = next_opt.n6_mu + 0.5*(next_opt.n6_mu-next_opt.n5_mu)
+    @test next.nm1 == 7 && next.solver.k == 20 && !next.solver.warm_start
+    @test next.couplings.Uf0 == 1.834 && next.couplings.Vf0 == 0.45
+    @test next.mus ≈ next_damped .+ [-0.01, -0.005, 0.0, 0.005, 0.01] atol=1e-14
+    @test next.terms == pilot.terms && next.metric == :q && FastED.plan(next).tasks == 20
+    @test FastEDPipeline.resource_fields(next_path) == (8, 8, 8, 8, 4, 1)
+    @test next_opt.scan_parameter == "Vf0" && next_opt.scan_value == 0.45
+    @test next_opt.n5_q == 0.21819656826690698
+    @test next_opt.n6_delta_o == 3.0438948900444003
+    @test next.cache_id != pilot.cache_id
+
+    pending = Dict{String,Any}(
+        "action" => "bundle", "complete" => false, "accepted" => true,
+        "stage" => "followup", "next_mus" => [0.145125],
+        "next_profile" => "round_2_followup.toml", "next_tasks" => 4,
+        "bundle_list" => "bundle_file_list.txt",
+    )
+    packaged = FastEDPipeline.completed_state(pending, "/tmp/final.tar.gz")
+    @test packaged["action"] == "complete" && packaged["complete"]
+    @test packaged["accepted"] && packaged["stage"] == "final"
+    @test all(!haskey(packaged, key) for key in
+              ("next_mus", "next_profile", "next_tasks", "bundle_list"))
+    @test pending["action"] == "bundle" && !pending["complete"]
 
     make_row(mu, q; valid=true, factor=0.03, gaps=Float64[0.04, 0.06, 0.09, 0.09, 0.09]) =
         (mu=Float64(mu), q=Float64(q), valid=valid, factor=Float64(factor),
@@ -214,6 +251,81 @@ end
         )
         @test submitted["action"] == "awaiting_results"
         @test length(submitted["submission_log"]) == 1
+    end
+
+    mktempdir(root) do directory
+        config = TOML.parsefile(pilot_path)
+        config["pipeline"]["name"] = "bundle_state_test"
+        config["pipeline"]["state_root"] = joinpath(directory, "states")
+        config["pipeline"]["archive_root"] = joinpath(directory, "archives")
+        config["fast_ed"]["cache_root"] = joinpath(directory, "cache")
+        config["fast_ed"]["result_root"] = joinpath(directory, "runs")
+        path = joinpath(directory, "pilot.toml")
+        open(path, "w") do io
+            TOML.print(io, config; sorted=true)
+        end
+        spec = FastED.load_spec(path)
+        local_opt = FastEDPipeline.pipeline_options(spec)
+        mkpath(spec.cache_directory)
+        MottJainED.atomic_toml(FastED.cache_manifest_path(spec), Dict(
+            "cache_id" => spec.cache_id, "complete" => true,
+        ))
+        spectrum = joinpath(directory, "measured_spectrum.csv")
+        write(spectrum, "energy\n0.0\n")
+        row(mu, q) = (
+            cache_id=spec.cache_id, settings_id=spec.settings_id, nm1=7,
+            mu=mu, k=20, score_valid=true, definition="custom",
+            score_terms="ds_s,j,curlj,dj_rank1,t_rank1", metric="q",
+            objective=q, q=q, cost=q^2, factor=0.03, delta_s=1.5,
+            delta_o=2.9, state_count=80, reason="", valid=true,
+            raw_gaps=[0.03, 0.06, 0.09, 0.09, 0.09], profile=path,
+        )
+        rows = [row(0.145, 0.08), row(0.145125, 0.07), row(0.14525, 0.08)]
+        relation = (cache_id=spec.cache_id, settings_id=spec.settings_id,
+                    nm1=7, mu=0.145125, term="ds_s", label="dS-S",
+                    raw_gap=0.03, target_gap=1.0, scaled_gap=1.0, residual=0.0)
+        selected = (mu=0.145125, label="S", l2=0, c2=0, raw_rank=2,
+                    z=1, r=1, sector_rank=2, energy=0.03, gap=0.03, dimension=1.0)
+        analysis = (
+            base=spec, rows=rows, relations=[relation], selected=[selected],
+            files=[(file=relpath(path, FastED.PROJECT_ROOT), sha256="abc", bytes=1)],
+            max_quantum_error=0.0, max_copy_split=0.0, max_selected_rank=2,
+            issues=String[],
+            spectrum_paths=Dict(FastEDPipeline.key(0.145125) => spectrum),
+        )
+        decision = (
+            best=rows[2], triplet=(xs=[0.145, 0.145125, 0.14525],
+                                   qs=[0.08, 0.07, 0.08], vertex=0.145125,
+                                   predicted_q=0.07, improvement=0.0),
+            factor_jump=0.0, gap_jump=0.0,
+        )
+        state = FastEDPipeline.initialize(path)
+        state["action"] = "awaiting_results"
+        state["stage"] = "followup"
+        state["next_mus"] = [0.145125]
+        state["next_profile"] = "round_2_followup.toml"
+        state["next_tasks"] = 4
+        FastEDPipeline.finalise!(state, local_opt, analysis, decision)
+        live = TOML.parsefile(FastEDPipeline.state_path(local_opt))
+        snapshot_path = joinpath(FastEDPipeline.final_directory(local_opt), "pipeline_state.toml")
+        snapshot = TOML.parsefile(snapshot_path)
+        bundle_paths = readlines(live["bundle_list"])
+        @test live["action"] == "bundle" && !live["complete"] && live["stage"] == "final"
+        @test snapshot["action"] == "complete" && snapshot["complete"]
+        @test snapshot["stage"] == "final" && snapshot["packaged_snapshot"]
+        @test !haskey(snapshot, "next_mus") && !haskey(snapshot, "bundle_list")
+        @test relpath(FastEDPipeline.state_path(local_opt), FastED.PROJECT_ROOT) ∉ bundle_paths
+        @test relpath(FastEDPipeline.final_directory(local_opt), FastED.PROJECT_ROOT) ∈ bundle_paths
+        archive = live["bundle_path"]
+        mkpath(dirname(archive))
+        write(archive, "verified archive bytes")
+        digest = bytes2hex(sha256(read(archive)))
+        finished = FastEDPipeline.mark_bundled(path, archive, digest)
+        @test finished["action"] == "complete" && finished["complete"]
+        @test finished["stage"] == "final" && finished["bundle_sha256"] == digest
+        @test finished["bundle_bytes"] == filesize(archive)
+        @test all(!haskey(finished, key) for key in
+                  ("next_mus", "next_profile", "next_tasks", "bundle_list"))
     end
 
     launcher = read(joinpath(root, "scripts", "submit_fast_ed_pipeline.sh"), String)

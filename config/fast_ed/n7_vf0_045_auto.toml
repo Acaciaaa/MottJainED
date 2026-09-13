@@ -1,0 +1,83 @@
+# First production use of the bounded N=7 pipeline after the Uf0=2.00 pilot.
+# N5/N6 inputs come from the audited stage-12-style local/wide searches.
+
+[model]
+nm1 = 7
+
+[hamiltonian]
+Uf = 0.46
+Uf0 = 1.834
+U0 = 4.14
+Vf = 0.0
+Vf0 = 0.45
+V0 = 0.34
+t = 0.5
+mu = 0.152892108935575
+
+[solver]
+k = 20
+eig_tol = 1.0e-8
+energy_tol = 1.0e-7
+quantum_tol = 2.0e-3
+degeneracy_tol = 2.0e-6
+dense_cutoff = 128
+ncv_extra = 12
+warm_start = false
+
+[fast_ed]
+run_name = "n7_vf0_045_auto_scout"
+cache_root = "output/fast_ed/cache"
+result_root = "output/fast_ed/runs"
+k = 20
+mus = [
+    0.142892108935575,
+    0.147892108935575,
+    0.152892108935575,
+    0.157892108935575,
+    0.162892108935575,
+]
+score_terms = ["ds_s", "j", "curlj", "dj_rank1", "t_rank1"]
+score_metric = "q"
+allow_cache_release = false
+
+[pipeline]
+name = "n7_vf0_045_auto"
+state_root = "output/fast_ed/pipelines"
+archive_root = "output/fast_ed/archives"
+scan_parameter = "Vf0"
+scan_value = 0.45
+n5_mu = 0.14661203561809
+n6_mu = 0.15079875116308
+n5_q = 0.21819656826690698
+n6_q = 0.11316475244965805
+n5_factor = 0.03740153708395494
+n6_factor = 0.03573359400235562
+n5_delta_s = 1.4448140966610945
+n6_delta_s = 1.4611571519372883
+n5_delta_o = 3.259632487857372
+n6_delta_o = 3.0438948900444003
+scout_step = 0.005
+fine_step = 0.00025
+fit_snap_step = 0.000125
+fine_count = 7
+max_adaptive_rounds = 3
+max_total_mus = 16
+mu_min = 0.12
+mu_max = 0.18
+accept_neighbor_distance = 0.000251
+q_fit_improvement_tol = 1.0e-5
+max_quantum_error = 5.0e-4
+max_copy_split = 2.0e-6
+max_factor_relative_jump = 0.05
+max_gap_relative_jump = 0.05
+guard_mus = []
+
+prepare_cpus = 8
+prepare_threads = 8
+solve_cpus = 8
+solve_threads = 8
+max_concurrent = 4
+control_cpus = 1
+
+# Keep this cache until its final archive has been downloaded and audited.
+auto_release = false

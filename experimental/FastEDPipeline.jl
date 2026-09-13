@@ -403,6 +403,20 @@ function write_combined(opt, analysis)
     return summary
 end
 
+function completed_state(state, archive_path::AbstractString)
+    output = deepcopy(state)
+    output["accepted"] = true
+    output["complete"] = true
+    output["action"] = "complete"
+    output["stage"] = "final"
+    output["bundle_path"] = abspath(archive_path)
+    output["updated_at"] = string(now())
+    for field in ("next_mus", "next_profile", "next_tasks", "bundle_list")
+        delete!(output, field)
+    end
+    return output
+end
+
 function finalise!(state, opt, analysis, decision)
     summary = write_combined(opt, analysis)
     best = decision.best; best_mu = key(best.mu)
@@ -448,11 +462,21 @@ function finalise!(state, opt, analysis, decision)
         "finished_at" => string(now()),
     )
     MottJainED.atomic_toml(joinpath(final_directory(opt), "pipeline_audit.toml"), audit)
+    archive_path = joinpath(opt.archive_root, "$(opt.name)_final.tar.gz")
+    state["accepted"] = true; state["complete"] = false; state["action"] = "bundle"
+    state["stage"] = "final"; state["best_mu"] = best.mu; state["best_q"] = best.q
+    state["bundle_path"] = archive_path
+    for field in ("next_mus", "next_profile", "next_tasks")
+        delete!(state, field)
+    end
+    packaged_state = completed_state(state, archive_path)
+    packaged_state["packaged_snapshot"] = true
+    packaged_state["bundle_sha256_sidecar"] = basename(archive_path) * ".sha256"
+    MottJainED.atomic_toml(joinpath(final_directory(opt), "pipeline_state.toml"), packaged_state)
     paths = String[relpath(String(state["base_config"]), FastED.PROJECT_ROOT)]
     append!(paths, relpath.(String.(state["profiles"]), Ref(FastED.PROJECT_ROOT)))
     append!(paths, relpath.([FastED.load_spec(path).result_directory for path in state["profiles"]], Ref(FastED.PROJECT_ROOT)))
     push!(paths, relpath(FastED.cache_manifest_path(analysis.base), FastED.PROJECT_ROOT))
-    push!(paths, relpath(state_path(opt), FastED.PROJECT_ROOT))
     push!(paths, relpath(final_directory(opt), FastED.PROJECT_ROOT))
     paths = sort!(unique(paths))
     all(path -> !startswith(path, "..") && !isabspath(path) && !occursin('\n', path), paths) ||
@@ -467,10 +491,7 @@ function finalise!(state, opt, analysis, decision)
     finally
         isfile(temporary) && rm(temporary; force=true)
     end
-    archive_path = joinpath(opt.archive_root, "$(opt.name)_final.tar.gz")
-    state["accepted"] = true; state["complete"] = false; state["action"] = "bundle"
-    state["best_mu"] = best.mu; state["best_q"] = best.q
-    state["bundle_path"] = archive_path; state["bundle_list"] = list_path
+    state["bundle_list"] = list_path
     state["updated_at"] = string(now())
     write_state(opt, state)
     return state
@@ -527,10 +548,11 @@ function mark_bundled(config_path::AbstractString, archive_path::AbstractString,
     isfile(real_archive) || throw(ArgumentError("Bundle does not exist: $real_archive"))
     actual = bytes2hex(sha256(read(real_archive)))
     lowercase(expected_sha) == actual || throw(ArgumentError("Bundle SHA-256 mismatch"))
-    state["bundle_sha256"] = actual; state["bundle_bytes"] = filesize(real_archive)
-    state["complete"] = true; state["action"] = "complete"; state["updated_at"] = string(now())
-    write_state(opt, state)
-    return state
+    finished = completed_state(state, real_archive)
+    finished["bundle_sha256"] = actual
+    finished["bundle_bytes"] = filesize(real_archive)
+    write_state(opt, finished)
+    return finished
 end
 
 function action_fields(config_path::AbstractString)

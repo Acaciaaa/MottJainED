@@ -1,14 +1,14 @@
 # N=7 有界自动分段流程
 
-当前 pilot 只计算 `Uf0=2.00, Vf0=0.55, V0=0.34`。它复用已经验证过的
+`Uf0=2.00, Vf0=0.55, V0=0.34` pilot已经完成并通过本地raw复核；当前生产点是
+`Uf0=1.834, Vf0=0.45, V0=0.34`。流程复用已经验证过的
 “共享矩阵 cache + 独立 `(mu,sector)` array”算法，只自动执行每批结果之后的小文件审计、
 下一批局部网格选择和 Slurm 提交。它不会调用旧 `FastMuSearch`、不会做全区间优化，
 也不会在等待时占着 CPU。
 
 ## 决策顺序
 
-1. 用 N5/N6 的阻尼延拓
-   `mu6 + 0.5*(mu6-mu5) = 0.145536883454595` 作中心，实际计算中心左右
+1. 用每个Hamiltonian自己的 N5/N6 阻尼延拓 `mu6 + 0.5*(mu6-mu5)` 作中心，实际计算中心左右
    `[-0.01,-0.005,0,0.005,0.01]` 五个 scout 点。
 2. 若 scout 最低点在边界，只向下降方向增加至多两个 `0.005` 间隔的点；最低点被包住后，
    用相邻三点的 `q^2` 二次拟合选择网格中心。拟合值只选网格，不会写成实测 `muc`。
@@ -48,34 +48,38 @@ profile 固定为 8。`MAX_CONCURRENT_OVERRIDE` 可以降低同一时刻的独�
 源文件 SHA-256、含可信 N5/N6 与新 N7 行的 `fss_n567.csv` 和 audit，并生成：
 
 ```text
-output/fast_ed/archives/n7_uf0_200_auto_final.tar.gz
-output/fast_ed/archives/n7_uf0_200_auto_final.tar.gz.sha256
+output/fast_ed/archives/<pipeline_name>_final.tar.gz
+output/fast_ed/archives/<pipeline_name>_final.tar.gz.sha256
 ```
 
-pilot 不删除 Uf0=2.00 cache，也不启动下一个 Hamiltonian。下载并完成一次本地审计后，再把
-同一 manager 用于 `Vf0=0.45/0.65`。正常完成只需下载上面两个文件；日志和 sacct 仅在
-失败或资源诊断时需要。
+归档不再收入打包前的live状态文件。它收入`final/pipeline_state.toml`完成态快照；服务器上的
+live状态只在归档SHA验证后才原子更新为`complete`并记录实际SHA。这样归档内部不会再出现
+`action=bundle, complete=false`的误导状态，同时也不会在tar失败前把服务器live状态提前标成
+完成。正常完成只需下载上面两个文件；日志和sacct仅在失败或资源诊断时需要。
 
 ## 服务器入口
 
-确保队列为空、旧 Uf0=1.65 小结果已在本地归档后，可以用受控命令检查和释放它的 25 GiB
-cache。该命令要求手工输入精确 cache ID，核对完整 manifest，并保护 retained 中心 cache：
+Uf0=2.00最终包已在本地逐文件核验，服务器cache ID为`ce74ad933acda136`。确保队列为空后，
+用受控命令检查并释放它的约25 GiB cache；命令要求手工输入精确ID、核对完整manifest，
+并保护retained中心cache：
 
 ```bash
 julia --startup-file=no --project=. scripts/fast_ed_pipeline.jl inspect-cache \
-  --config=config/fast_ed/n7_uf0_165_cache_retirement.toml
+  --config=config/fast_ed/n7_uf0_200_cache_retirement.toml
 
 julia --startup-file=no --project=. scripts/fast_ed_pipeline.jl retire-cache \
-  --config=config/fast_ed/n7_uf0_165_cache_retirement.toml \
-  --confirm-cache-id=aaa8ccb4a8dd9fef
+  --config=config/fast_ed/n7_uf0_200_cache_retirement.toml \
+  --confirm-cache-id=ce74ad933acda136
 ```
 
-随后一次启动整个 Uf0=2.00 pilot：
+随后一次启动整个Vf0=0.45流程。该点N5/N6为
+`mu=0.14661203561809/0.15079875116308`，阻尼中心`0.152892108935575`，首次五点范围为
+`0.142892108935575–0.162892108935575`：
 
 ```bash
-bash scripts/submit_fast_ed_pipeline.sh config/fast_ed/n7_uf0_200_auto.toml
+bash scripts/submit_fast_ed_pipeline.sh config/fast_ed/n7_vf0_045_auto.toml
 ```
 
 状态文件位于
-`output/fast_ed/pipelines/n7_uf0_200_auto/pipeline_state.toml`。若状态为 `review`，说明流程
+`output/fast_ed/pipelines/n7_vf0_045_auto/pipeline_state.toml`。若状态为 `review`，说明流程
 已停止且 cache 保留；不要直接重启或删除文件，应根据 `review_reason` 做一次针对性处理。

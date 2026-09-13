@@ -232,6 +232,20 @@ julia --project=. scripts/fast_ed.jl release-cache \
 目前没有更改 FuzzifiED 底层。如果以后 profiling 证明需要改 JLL/Fortran 的
 稀疏矩阵乘法或 eigensolver 接口，必须另建 FuzzifiED fork/构建目录并先取得许可。
 
+## 当前自动N=7点（2026-09-13）
+
+Uf0=2.00 pilot已完成并通过本地raw审计，接受实测`mu=0.145125`、
+`q=0.07326351956935973`。下一点使用
+`config/fast_ed/n7_vf0_045_auto.toml`计算`Uf0=1.834,Vf0=0.45,V0=0.34`；N5/N6阻尼
+延拓中心为`0.152892108935575`。仍是一点一cache、每个sector任务8CPU/8线程、最多四个
+并发，完成后只下载最终tar.gz和sha256。
+
+Uf0=2.00的服务器cache只有在本地归档SHA
+`bedb6a2f9d444be294fff1d6f3753ba42b7dbf326df3bcd269e6f211f718ae36`已经核验、队列为空，
+且`n7_uf0_200_cache_retirement.toml`算出的ID严格等于`ce74ad933acda136`时才可受控释放。
+retained中心cache继续保护。自动归档现包含`final/pipeline_state.toml`完成态快照；live状态
+仍在SHA核验后才改成complete，避免包内保留打包前的bundle状态。
+
 ## 已完成的本地等价性检查
 
 - N=5、k=20：80 态键完全相同，最大能量误差 `3.24e-14`，最大 L2/C2
