@@ -1,0 +1,40 @@
+# Exact, auditable retirement profile for the completed Uf0=1.65 N=7 cache.
+# The small result archive was verified locally before this profile was added.
+
+[model]
+nm1 = 7
+
+[hamiltonian]
+Uf = 0.46
+Uf0 = 1.65
+U0 = 4.14
+Vf = 0.0
+Vf0 = 0.55
+V0 = 0.34
+t = 0.5
+mu = 0.144375
+
+[solver]
+k = 20
+eig_tol = 1.0e-8
+energy_tol = 1.0e-7
+quantum_tol = 2.0e-3
+degeneracy_tol = 2.0e-6
+dense_cutoff = 128
+ncv_extra = 12
+warm_start = false
+
+[fast_ed]
+run_name = "n7_uf0_165_cache_retirement"
+cache_root = "output/fast_ed/cache"
+result_root = "output/fast_ed/runs"
+k = 20
+mus = [0.144375]
+score_terms = ["ds_s", "j", "curlj", "dj_rank1", "t_rank1"]
+score_metric = "q"
+allow_cache_release = false
+
+[cache_retirement]
+expected_cache_id = "aaa8ccb4a8dd9fef"
+verified_local_archive = "n7_uf0_165_k20_final_20260913.tar.gz"
+verified_local_archive_sha256 = "664ebff04e0e2892b1c7993ccf5e60ad18db7dd24aaafd814ce027b0ba66cd44"

@@ -1,4 +1,8 @@
-# N=7 Uf0=1.65: two targeted follow-up points
+# N=7 Uf0=1.65：已完成的手工分段记录
+
+本页记录548421/548422/548498及最后两点补扫的由来。14个实测mu合并审计后，已接受
+`mu=0.144375, q=0.09683425844993852`，无需再次执行本页旧提交命令。当前 Uf0=2.00
+试运行入口和自动停止条件见 [N7_AUTO_PIPELINE.md](N7_AUTO_PIPELINE.md)。
 
 ## N=5/6 results audited on 2026-09-12
 
@@ -25,7 +29,7 @@ All five N6 searches had an unscored wide-Brent evaluation at `mu=0.0577864045`:
 curlJ raw rank 3 was absent even at k=30. An unscored point cannot be treated as
 evidence that q is large. Raw-rank conventions and the five score terms remain unchanged.
 
-## Current result: refinement 548498 is complete, muc is still under review
+## 历史中间状态：refinement 548498 完成时仍需补点
 
 All 28 tasks completed with exit code 0:0. The downloaded 28 CSV/TOML pairs contain
 560 states with complete per-sector ranks 1–20. Cache/settings identities,
@@ -62,7 +66,7 @@ The maximum required sector rank is 9. The largest quantum-number rounding error
 gaps vary smoothly over the fine grid. Only one distinct O multiplet is visible;
 these files cannot establish overlap continuity or exclude crossings with a higher O.
 
-## Next calculation: only mu=0.14400 and 0.144375
+## 已完成的最后计算：mu=0.14400 和 0.144375
 
 Use `config/fast_ed/n7_uf0_165_k20_followup.toml`:
 
@@ -108,7 +112,7 @@ Server Julia is 1.12.1 with FuzzifiED_jll 1.0.3+0; local scoring uses Julia 1.11
 and a different JLL. Project/FuzzifiED matrix-source hashes match. Local analysis
 reads the spectra only and preserves the server's recorded cache identity.
 
-## Server commands: pull separately, then submit once
+## 历史服务器命令：不要重复提交
 
 Before pull:
 

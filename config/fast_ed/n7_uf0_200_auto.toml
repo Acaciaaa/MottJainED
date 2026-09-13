@@ -1,0 +1,90 @@
+# Bounded automatic pilot for the next N=7 Hamiltonian. It preserves the
+# validated independent-sector scout/refine workflow and automates only the
+# audits and small follow-up decisions between arrays.
+
+[model]
+nm1 = 7
+
+[hamiltonian]
+Uf = 0.46
+Uf0 = 2.0
+U0 = 4.14
+Vf = 0.0
+Vf0 = 0.55
+V0 = 0.34
+t = 0.5
+mu = 0.145536883454595
+
+[solver]
+k = 20
+eig_tol = 1.0e-8
+energy_tol = 1.0e-7
+quantum_tol = 2.0e-3
+degeneracy_tol = 2.0e-6
+dense_cutoff = 128
+ncv_extra = 12
+warm_start = false
+
+[fast_ed]
+run_name = "n7_uf0_200_auto_scout"
+cache_root = "output/fast_ed/cache"
+result_root = "output/fast_ed/runs"
+k = 20
+# Damped continuation: mu6 + 0.5*(mu6-mu5). The five values are measured;
+# the N5/N6 continuation is only the scout center.
+mus = [
+    0.135536883454595,
+    0.140536883454595,
+    0.145536883454595,
+    0.150536883454595,
+    0.155536883454595,
+]
+score_terms = ["ds_s", "j", "curlj", "dj_rank1", "t_rank1"]
+score_metric = "q"
+allow_cache_release = false
+
+[pipeline]
+name = "n7_uf0_200_auto"
+state_root = "output/fast_ed/pipelines"
+archive_root = "output/fast_ed/archives"
+scan_parameter = "Uf0"
+scan_value = 2.0
+n5_mu = 0.1403523179931
+n6_mu = 0.14380869496743
+n5_q = 0.24325484601508116
+n6_q = 0.12992870469074244
+n5_factor = 0.038156378422381204
+n6_factor = 0.036108509062905636
+n5_delta_s = 1.3736311582780456
+n6_delta_s = 1.399478524530633
+n5_delta_o = 3.298483238484791
+n6_delta_o = 3.0744735460523773
+scout_step = 0.005
+fine_step = 0.00025
+fit_snap_step = 0.000125
+fine_count = 7
+max_adaptive_rounds = 3
+max_total_mus = 16
+mu_min = 0.12
+mu_max = 0.18
+accept_neighbor_distance = 0.000251
+q_fit_improvement_tol = 1.0e-5
+max_quantum_error = 5.0e-4
+max_copy_split = 2.0e-6
+max_factor_relative_jump = 0.05
+max_gap_relative_jump = 0.05
+guard_mus = []
+
+# Jobs are independent. At most four 8-CPU solves exist simultaneously, and
+# each allocation ends with its one sector solve. The one-CPU controller only
+# reads small CSV/TOML files, submits the next array, and exits.
+prepare_cpus = 8
+prepare_threads = 8
+solve_cpus = 8
+solve_threads = 8
+max_concurrent = 4
+control_cpus = 1
+
+# Pilot policy: keep the new 25 GiB cache until its archive is downloaded and
+# audited locally. It never starts the next Hamiltonian automatically.
+auto_release = false

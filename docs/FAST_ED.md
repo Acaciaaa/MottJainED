@@ -1,5 +1,10 @@
 # 独立的 N=7 ED 实验层
 
+**当前入口（2026-09-13）：** Uf0=1.65 已接受实测 `muc=0.144375` 并完成本地归档。
+下一个 Uf0=2.00 点使用有硬上限的自动 scout/refine pilot，详见
+[N7_AUTO_PIPELINE.md](N7_AUTO_PIPELINE.md)。下面手工 scout/refine 命令保留为已验证方法和
+历史记录，不是当前要重复提交的步骤。
+
 这套代码只存在于 `MottJainED-fast-ed` 工作树中。它没有修改
 `FuzzifiED.jl`，也没有替换 `MottJainED` 原有的 `prepare_spectrum`、
 `solve_spectrum` 或 FSS/optimization 工作流。
@@ -180,9 +185,9 @@ output/two_size_tuning/n56_retained_local_vf0_01/
 及 `search/fss_optimize_evaluations.csv` 后，才安排第一个新 N=7 点。
 旧 `output/fast_ed/fss_n56_*` 的部分结果保留，但不会混入新流程。
 
-**2026-09-13 当前步骤：** Uf0=1.65、Vf0=0.55、V0=0.34 的七点精扫 548498
+**2026-09-13 已完成步骤：** Uf0=1.65、Vf0=0.55、V0=0.34 的七点精扫 548498
 全部成功，28 CSV/TOML、560 态通过身份/选态检查，两种独立评分重算完全一致。
-最低采样点 μ=0.14425、q=0.09688635 落在精扫左端；目前不能收尾换参数。
+最低采样点 μ=0.14425、q=0.09688635 落在精扫左端；随后两点补扫已完成。
 前三个精扫点估计谷底约0.144344，仅据此选择两个实测补点：
 `config/fast_ed/n7_uf0_165_k20_followup.toml`，μ=`[0.14400,0.144375]`。
 前者检查左侧回升，后者位于已有0.14425/0.14450之间，靠近估计谷底。
@@ -191,7 +196,8 @@ output/two_size_tuning/n56_retained_local_vf0_01/
 结果保存到 `output/fast_ed/runs/n7_uf0_165_followup/`，不改底层求解器或五项q。
 两个补点必须和已有scout/精扫一起在本地分析，不能对两点目录单独要求内部最小值。
 本轮各sector耗时5m55s–8m44s，整个精扫从首个开始至最后结束约53m35s。
-用户要求原始小文件回传，不提交服务器collect；先确认μ谷底及选态，再安排Uf0=2.00。
+合并14个实测mu后接受 `mu=0.144375, q=0.09683425844993852`；左右近邻回升，
+选态/身份/连续性审计通过。其小结果已在本地归档，下一点为Uf0=2.00自动pilot。
 用户网络不稳定，命令必须拆成 pull 前、单独 pull、成功后提交三段。
 完整精扫审计、资源记录与两点补算提交方式见 [N7_MU_SEARCH.md](N7_MU_SEARCH.md)。
 

@@ -4,6 +4,8 @@ using MottJainED
 
 include(joinpath(@__DIR__, "..", "experimental", "FastED.jl"))
 using .FastED
+include(joinpath(@__DIR__, "..", "experimental", "FastEDPipeline.jl"))
+using .FastEDPipeline
 
 @testset "Independent persistent-sector ED" begin
     mktempdir() do directory
@@ -127,6 +129,100 @@ using .FastED
         @test !isdir(spec.cache_directory)
         @test isfile(joinpath(spec.result_directory, "best_summary.csv"))
     end
+end
+
+@testset "Bounded N7 automatic pipeline decisions and resources" begin
+    root = joinpath(@__DIR__, "..")
+    pilot_path = joinpath(root, "config", "fast_ed", "n7_uf0_200_auto.toml")
+    retirement_path = joinpath(root, "config", "fast_ed", "n7_uf0_165_cache_retirement.toml")
+    pilot = FastED.load_spec(pilot_path)
+    opt = FastEDPipeline.pipeline_options(pilot)
+
+    damped = opt.n6_mu + 0.5*(opt.n6_mu-opt.n5_mu)
+    @test pilot.nm1 == 7 && pilot.solver.k == 20 && !pilot.solver.warm_start
+    @test pilot.couplings.Uf0 == 2.0 && pilot.couplings.Vf0 == 0.55
+    @test pilot.mus ≈ damped .+ [-0.01, -0.005, 0.0, 0.005, 0.01] atol=1e-14
+    @test pilot.terms == [:ds_s, :j, :curlj, :dj_rank1, :t_rank1]
+    @test pilot.metric == :q && FastED.plan(pilot).tasks == 20
+    @test FastEDPipeline.resource_fields(pilot_path) == (8, 8, 8, 8, 4, 1)
+    @test opt.max_total_mus == 16 && opt.max_adaptive_rounds == 3 && !opt.auto_release
+    @test opt.scan_parameter == "Uf0" && opt.scan_value == 2.0
+    @test opt.n5_delta_s == 1.3736311582780456
+    @test opt.n6_delta_o == 3.0744735460523773
+    retirement = FastED.load_spec(retirement_path)
+    retirement_config = TOML.parsefile(retirement_path)
+    prior_scout = FastED.load_spec(joinpath(root, "config", "fast_ed",
+                                            "n7_uf0_165_k20_scout_restart.toml"))
+    @test retirement_config["cache_retirement"]["expected_cache_id"] == "aaa8ccb4a8dd9fef"
+    @test retirement.cache_id == prior_scout.cache_id
+    @test retirement.cache_id != pilot.cache_id
+
+    make_row(mu, q; valid=true, factor=0.03, gaps=Float64[0.04, 0.06, 0.09, 0.09, 0.09]) =
+        (mu=Float64(mu), q=Float64(q), valid=valid, factor=Float64(factor),
+         raw_gaps=copy(gaps), delta_s=1.5, delta_o=2.9)
+    qcurve(mu; center=0.1455, q0=0.09) = sqrt(q0^2 + 400*(mu-center)^2)
+
+    scout_mus = pilot.mus
+    scout = [make_row(mu, qcurve(mu)) for mu in scout_mus]
+    refine_decision = FastEDPipeline.decide_next(scout, scout_mus, "scout", 0, opt)
+    @test refine_decision.action == "solve" && refine_decision.kind == "refine"
+    @test length(refine_decision.mus) == 7
+    @test all(isapprox.(diff(refine_decision.mus), 0.00025; atol=1e-14, rtol=0))
+
+    refined = vcat(scout, [make_row(mu, qcurve(mu)) for mu in refine_decision.mus])
+    accepted = FastEDPipeline.decide_next(
+        refined, refine_decision.mus, "refine", 1, opt,
+    )
+    @test accepted.action == "accept"
+    @test accepted.best.mu in refine_decision.mus
+    @test accepted.reason == "measured_minimum_bracketed"
+
+    edge_mus = collect(0.144:0.00025:0.1455)
+    edge_rows = [make_row(mu, sqrt(0.09^2 + 100*(mu-0.1458)^2)) for mu in edge_mus]
+    followup = FastEDPipeline.decide_next(edge_rows, edge_mus, "refine", 1, opt)
+    @test followup.action == "solve" && followup.kind == "followup"
+    @test 1 <= length(followup.mus) <= 2
+    @test all(mu -> mu > maximum(edge_mus), followup.mus)
+
+    invalid = copy(scout)
+    invalid[3] = make_row(invalid[3].mu, invalid[3].q; valid=false)
+    @test FastEDPipeline.decide_next(invalid, scout_mus, "scout", 0, opt).action == "review"
+    @test FastEDPipeline.decide_next(edge_rows, edge_mus, "followup", 3, opt).reason ==
+          "adaptive_round_limit"
+
+    mktempdir() do directory
+        config = TOML.parsefile(pilot_path)
+        config["pipeline"]["name"] = "state_test"
+        config["pipeline"]["state_root"] = joinpath(directory, "states")
+        config["pipeline"]["archive_root"] = joinpath(directory, "archives")
+        config["fast_ed"]["cache_root"] = joinpath(directory, "cache")
+        config["fast_ed"]["result_root"] = joinpath(directory, "runs")
+        path = joinpath(directory, "pilot.toml")
+        open(path, "w") do io
+            TOML.print(io, config; sorted=true)
+        end
+        state = FastEDPipeline.initialize(path)
+        @test state["action"] == "ready" && state["stage"] == "scout"
+        @test isfile(FastEDPipeline.state_path(FastEDPipeline.pipeline_options(FastED.load_spec(path))))
+        @test FastEDPipeline.claim_launch(path)["action"] == "launching"
+        @test_throws ArgumentError FastEDPipeline.claim_launch(path)
+        @test FastEDPipeline.reset_launch(path)["action"] == "ready"
+        FastEDPipeline.claim_launch(path)
+        submitted = FastEDPipeline.record_submission(
+            path; stage="scout", prepare_job="101", solve_job="102",
+            controller_job="103",
+        )
+        @test submitted["action"] == "awaiting_results"
+        @test length(submitted["submission_log"]) == 1
+    end
+
+    launcher = read(joinpath(root, "scripts", "submit_fast_ed_pipeline.sh"), String)
+    controller = read(joinpath(root, "slurm", "fast_ed_pipeline_controller.sbatch"), String)
+    @test occursin(raw"%${max_concurrent}", launcher)
+    @test occursin(raw"afterany:$solve_job", launcher)
+    @test occursin(raw"%${max_concurrent}", controller)
+    @test occursin(raw"afterany:$solve_job", controller)
+    @test !occursin("sleep ", launcher*controller)
 end
 
 @testset "Fresh N7 five-point scout uses the validated array workflow" begin
