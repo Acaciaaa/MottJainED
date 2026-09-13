@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 
 # Launch one bounded N=7 Hamiltonian pipeline. The script submits prepare, the
-# five-point sector array, and a short dependent controller; it never waits while
-# holding an allocation.
+# initial scout sector array (five continuation points plus declared guards), and
+# a short dependent controller; it never waits while holding an allocation.
 set -euo pipefail
 
 if (( $# != 1 )); then

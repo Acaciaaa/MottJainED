@@ -1,7 +1,7 @@
 # N=7 有界自动分段流程
 
-`Uf0=2.00, Vf0=0.55, V0=0.34` pilot已经完成并通过本地raw复核；当前生产点是
-`Uf0=1.834, Vf0=0.45, V0=0.34`。流程复用已经验证过的
+`Uf0=2.00, Vf0=0.55, V0=0.34` pilot和`Vf0=0.45`生产点均已完成并通过本地raw复核；
+当前生产点是`Uf0=1.834, Vf0=0.65, V0=0.34`。流程复用已经验证过的
 “共享矩阵 cache + 独立 `(mu,sector)` array”算法，只自动执行每批结果之后的小文件审计、
 下一批局部网格选择和 Slurm 提交。它不会调用旧 `FastMuSearch`、不会做全区间优化，
 也不会在等待时占着 CPU。
@@ -9,7 +9,8 @@
 ## 决策顺序
 
 1. 用每个Hamiltonian自己的 N5/N6 阻尼延拓 `mu6 + 0.5*(mu6-mu5)` 作中心，实际计算中心左右
-   `[-0.01,-0.005,0,0.005,0.01]` 五个 scout 点。
+   `[-0.01,-0.005,0,0.005,0.01]` 五个 scout 点。若N5/N6已经确认另有竞争谷，可在首次
+   scout中加入最多两个明确的`guard_mus`，这些点与主网格一起实际求解并参与全局比较。
 2. 若 scout 最低点在边界，只向下降方向增加至多两个 `0.005` 间隔的点；最低点被包住后，
    用相邻三点的 `q^2` 二次拟合选择网格中心。拟合值只选网格，不会写成实测 `muc`。
 3. 以 `0.00025` 间隔实际计算七个 refine 点，中心吸附到 `0.000125` 网格。
@@ -29,6 +30,10 @@ Hamiltonian、cold-start k=20 solver、线程数、sector 维数和完整 rank�
 `ds_s,j,curlj,dj_rank1,t_rank1` 五项 q；S 使用 `(0,0)` raw rank 2，curlJ 使用
 `(2,3)` raw rank 3，其余约定保持不变。它还检查基态 singlet、量子数取整误差、最低
 对称副本劈裂、factor 和五条 gap 的局部变化。无效分数不会被替换成“大 q”。
+
+这里J和curlJ属于同一个`(L2,C2)=(2,3)`量子数通道：raw rank 1、2是J这一条物理能级在
+两个离散对称sector中的等能副本；raw rank 3、4是下一条不同物理能级curlJ的两个副本。
+因此curlJ写raw rank 3，去除副本后就是该量子数通道的第二条物理能级。
 
 ## 并发和计费
 
@@ -59,20 +64,20 @@ live状态只在归档SHA验证后才原子更新为`complete`并记录实际SHA
 
 ## 服务器入口
 
-Uf0=2.00最终包已在本地逐文件核验，服务器cache ID为`ce74ad933acda136`。Vf0=0.45配置
+Vf0=0.45最终包已在本地逐文件核验，服务器cache ID为`342e15745d81a91a`。Vf0=0.65配置
 列出已经核验过的旧cache retirement profiles。用户入口先用纯shell检查队列并只提交一个
 1 CPU bootstrap；bootstrap在计算节点完成Julia预编译、旧cache的ID/完整manifest核验与释放，
 然后启动prepare、scout和后续controller。登录节点不再启动Julia，也不需要手工执行cache检查。
 retained中心cache仍由底层命令独立保护。
 
-该点N5/N6为
-`mu=0.14661203561809/0.15079875116308`，阻尼中心`0.152892108935575`，首次五点范围为
-`0.142892108935575–0.162892108935575`：
+该点N5/N6为`mu=0.13608278512369/0.13807344943979`，阻尼中心`0.13906878159784`，
+五点主scout范围为`0.12906878159784–0.14906878159784`。N6另有一个已确认但q较高的局部谷
+`mu=0.12771774983325`，所以首次额外实算这一个guard点，共6个mu、24个sector task：
 
 ```bash
-bash scripts/submit_fast_ed_pipeline.sh config/fast_ed/n7_vf0_045_auto.toml
+bash scripts/submit_fast_ed_pipeline.sh config/fast_ed/n7_vf0_065_auto.toml
 ```
 
 状态文件位于
-`output/fast_ed/pipelines/n7_vf0_045_auto/pipeline_state.toml`。若状态为 `review`，说明流程
+`output/fast_ed/pipelines/n7_vf0_065_auto/pipeline_state.toml`。若状态为 `review`，说明流程
 已停止且 cache 保留；不要直接重启或删除文件，应根据 `review_reason` 做一次针对性处理。

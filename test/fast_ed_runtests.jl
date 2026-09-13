@@ -138,6 +138,8 @@ end
     retirement_path = joinpath(root, "config", "fast_ed", "n7_uf0_165_cache_retirement.toml")
     completed_retirement_path = joinpath(root, "config", "fast_ed", "n7_uf0_200_cache_retirement.toml")
     next_path = joinpath(root, "config", "fast_ed", "n7_vf0_045_auto.toml")
+    vf0_retirement_path = joinpath(root, "config", "fast_ed", "n7_vf0_045_cache_retirement.toml")
+    final_vf0_path = joinpath(root, "config", "fast_ed", "n7_vf0_065_auto.toml")
     pilot = FastED.load_spec(pilot_path)
     opt = FastEDPipeline.pipeline_options(pilot)
 
@@ -186,6 +188,51 @@ end
         "config/fast_ed/n7_uf0_200_cache_retirement.toml",
     ]
 
+    vf0_retirement = FastED.load_spec(vf0_retirement_path)
+    vf0_retirement_config = TOML.parsefile(vf0_retirement_path)
+    @test vf0_retirement.cache_id == next.cache_id
+    @test vf0_retirement_config["cache_retirement"]["expected_cache_id"] ==
+          "342e15745d81a91a"
+    @test vf0_retirement_config["cache_retirement"]["verified_local_archive_sha256"] ==
+          "f4f75f0e9248244e802b944f99d4f6a1bb3548739d57ebf4abc6a4d51d661372"
+
+    final_vf0 = FastED.load_spec(final_vf0_path)
+    final_opt = FastEDPipeline.pipeline_options(final_vf0)
+    final_damped = final_opt.n6_mu + 0.5*(final_opt.n6_mu-final_opt.n5_mu)
+    final_main_scout = final_damped .+ [-0.01, -0.005, 0.0, 0.005, 0.01]
+    @test final_vf0.nm1 == 7 && final_vf0.solver.k == 20 && !final_vf0.solver.warm_start
+    @test final_vf0.couplings.Uf0 == 1.834 && final_vf0.couplings.Vf0 == 0.65
+    expected_final_scout = vcat(final_main_scout, final_opt.guard_mus)
+    @test length(final_vf0.mus) == length(expected_final_scout)
+    @test all(any(isapprox(expected, actual; atol=1e-14, rtol=0)
+                  for actual in final_vf0.mus) for expected in expected_final_scout)
+    @test final_opt.guard_mus == [0.12771774983325]
+    @test final_vf0.terms == pilot.terms && final_vf0.metric == :q
+    @test FastED.plan(final_vf0).tasks == 24
+    @test FastEDPipeline.resource_fields(final_vf0_path) == (8, 8, 8, 8, 4, 1)
+    @test final_opt.scan_parameter == "Vf0" && final_opt.scan_value == 0.65
+    @test final_opt.n5_q == 0.15935728084504894
+    @test final_opt.n6_q == 0.11603076339853687
+    @test final_opt.n6_delta_o == 2.9429301053671573
+    @test final_opt.max_total_mus == 16 && final_opt.mu_min == 0.11
+    @test final_vf0.cache_id != next.cache_id
+    final_config = TOML.parsefile(final_vf0_path)
+    @test final_config["pipeline"]["retire_before_start"] == [
+        "config/fast_ed/n7_uf0_165_cache_retirement.toml",
+        "config/fast_ed/n7_uf0_200_cache_retirement.toml",
+        "config/fast_ed/n7_vf0_045_cache_retirement.toml",
+    ]
+
+    mktempdir() do directory
+        missing_guard = deepcopy(final_config)
+        filter!(mu -> mu != final_opt.guard_mus[1], missing_guard["fast_ed"]["mus"])
+        path = joinpath(directory, "missing_guard.toml")
+        open(path, "w") do io
+            TOML.print(io, missing_guard; sorted=true)
+        end
+        @test_throws ArgumentError FastEDPipeline.pipeline_options(FastED.load_spec(path))
+    end
+
     pending = Dict{String,Any}(
         "action" => "bundle", "complete" => false, "accepted" => true,
         "stage" => "followup", "next_mus" => [0.145125],
@@ -203,6 +250,23 @@ end
         (mu=Float64(mu), q=Float64(q), valid=valid, factor=Float64(factor),
          raw_gaps=copy(gaps), delta_s=1.5, delta_o=2.9)
     qcurve(mu; center=0.1455, q0=0.09) = sqrt(q0^2 + 400*(mu-center)^2)
+
+    guarded_scout = [make_row(mu, mu == final_opt.guard_mus[1] ? 0.24 :
+                                   qcurve(mu; center=final_damped, q0=0.10))
+                     for mu in final_vf0.mus]
+    guarded_refine = FastEDPipeline.decide_next(
+        guarded_scout, final_vf0.mus, "scout", 0, final_opt,
+    )
+    @test guarded_refine.action == "solve" && guarded_refine.kind == "refine"
+    @test all(abs(mu-final_damped) < 0.002 for mu in guarded_refine.mus)
+
+    guard_wins = [make_row(mu, mu == final_opt.guard_mus[1] ? 0.05 : 0.20)
+                  for mu in final_vf0.mus]
+    guard_extension = FastEDPipeline.decide_next(
+        guard_wins, final_vf0.mus, "scout", 0, final_opt,
+    )
+    @test guard_extension.action == "solve" && guard_extension.kind == "scout_extension"
+    @test all(mu < final_opt.guard_mus[1] for mu in guard_extension.mus)
 
     scout_mus = pilot.mus
     scout = [make_row(mu, qcurve(mu)) for mu in scout_mus]

@@ -1,7 +1,7 @@
 # 独立的 N=7 ED 实验层
 
-**当前入口（2026-09-13）：** Uf0=1.65 已接受实测 `muc=0.144375` 并完成本地归档。
-下一个 Uf0=2.00 点使用有硬上限的自动 scout/refine pilot，详见
+**当前入口（2026-09-14）：** Vf0=0.45 已接受实测 `muc=0.152375` 并完成本地归档。
+下一个 Vf0=0.65 点使用相同的有硬上限自动 scout/refine 流程，详见
 [N7_AUTO_PIPELINE.md](N7_AUTO_PIPELINE.md)。下面手工 scout/refine 命令保留为已验证方法和
 历史记录，不是当前要重复提交的步骤。
 
@@ -232,21 +232,27 @@ julia --project=. scripts/fast_ed.jl release-cache \
 目前没有更改 FuzzifiED 底层。如果以后 profiling 证明需要改 JLL/Fortran 的
 稀疏矩阵乘法或 eigensolver 接口，必须另建 FuzzifiED fork/构建目录并先取得许可。
 
-## 当前自动N=7点（2026-09-13）
+## 当前自动N=7点（2026-09-14）
 
-Uf0=2.00 pilot已完成并通过本地raw审计，接受实测`mu=0.145125`、
-`q=0.07326351956935973`。下一点使用
-`config/fast_ed/n7_vf0_045_auto.toml`计算`Uf0=1.834,Vf0=0.45,V0=0.34`；N5/N6阻尼
-延拓中心为`0.152892108935575`。仍是一点一cache、每个sector任务8CPU/8线程、最多四个
+Vf0=0.45生产点已完成并通过本地raw审计，接受实测`mu=0.152375`、
+`q=0.059984643683743934`。下一点使用
+`config/fast_ed/n7_vf0_065_auto.toml`计算`Uf0=1.834,Vf0=0.65,V0=0.34`；N5/N6阻尼
+延拓中心为`0.13906878159784`。仍是一点一cache、每个sector任务8CPU/8线程、最多四个
 并发，完成后只下载最终tar.gz和sha256。启动脚本在登录节点只检查空队列并提交一个1 CPU
 bootstrap；Julia加载/预编译、旧cache核验与受控清理、流水线初始化都在bootstrap allocation
 内完成。
 
-Uf0=2.00的服务器cache只有在本地归档SHA
-`bedb6a2f9d444be294fff1d6f3753ba42b7dbf326df3bcd269e6f211f718ae36`已经核验、队列为空，
-且`n7_uf0_200_cache_retirement.toml`算出的ID严格等于`ce74ad933acda136`时才可受控释放。
+Vf0=0.45的服务器cache只有在本地归档SHA
+`f4f75f0e9248244e802b944f99d4f6a1bb3548739d57ebf4abc6a4d51d661372`已经核验、队列为空，
+且`n7_vf0_045_cache_retirement.toml`实际计算、manifest与手输ID都严格对应
+`342e15745d81a91a`时才可受控释放。
 retained中心cache继续保护。自动归档现包含`final/pipeline_state.toml`完成态快照；live状态
 仍在SHA核验后才改成complete，避免包内保留打包前的bundle状态。
+
+Vf0=.65的五点主scout为`0.12906878159784–0.14906878159784`。由于N6在
+`mu=0.12771774983325`另有一个q较高的局部谷，首次scout额外计算这一点作guard，共6个mu、
+24个独立sector task，仍最多只有4个任务同时占用资源。guard若无效会停止进入review，
+不会被当成大q；若比主谷更低，则有界流程转向该侧扩展。
 
 ## 已完成的本地等价性检查
 

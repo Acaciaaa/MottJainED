@@ -89,8 +89,26 @@ function pipeline_options(spec)
     ))
     continuation = opt.n6_mu + 0.5*(opt.n6_mu-opt.n5_mu)
     expected_scout = continuation .+ opt.scout_step .* collect(-2:2)
-    length(spec.mus) == 5 && all(isapprox.(spec.mus, expected_scout; atol=1e-14, rtol=0)) ||
-        throw(ArgumentError("Initial scout must be the five-point damped N5/N6 continuation grid"))
+    all(isfinite, opt.guard_mus) || throw(ArgumentError("pipeline.guard_mus must be finite"))
+    (length(opt.guard_mus) <= 1 || all(diff(sort(opt.guard_mus)) .> 1e-14)) ||
+        throw(ArgumentError("pipeline.guard_mus must not contain duplicates"))
+    length(opt.guard_mus) <= 2 || throw(ArgumentError(
+        "At most two known-competing-valley guard points are allowed",
+    ))
+    expected_initial = copy(expected_scout)
+    for mu in opt.guard_mus
+        any(isapprox(mu, candidate; atol=1e-14, rtol=0) for candidate in expected_initial) ||
+            push!(expected_initial, mu)
+    end
+    actual_initial = Float64.(spec.mus)
+    unique_actual = length(actual_initial) <= 1 || all(diff(sort(actual_initial)) .> 1e-14)
+    matches_expected = length(actual_initial) == length(expected_initial) && all(
+        any(isapprox(expected, actual; atol=1e-14, rtol=0) for actual in actual_initial)
+        for expected in expected_initial
+    )
+    unique_actual && matches_expected || throw(ArgumentError(
+            "Initial scout must contain the five-point damped N5/N6 continuation grid plus every declared guard mu",
+        ))
     opt.mu_min < minimum(spec.mus) <= maximum(spec.mus) < opt.mu_max ||
         throw(ArgumentError("Initial scout must lie strictly inside pipeline.mu_min/mu_max"))
     opt.scout_step > 0 && opt.fine_step > 0 && opt.fit_snap_step > 0 ||
@@ -101,8 +119,6 @@ function pipeline_options(spec)
     opt.prepare_cpus >= opt.prepare_threads >= 1 || throw(ArgumentError("prepare CPU/thread settings are invalid"))
     opt.solve_cpus >= opt.solve_threads >= 1 || throw(ArgumentError("solve CPU/thread settings are invalid"))
     opt.max_concurrent >= 1 && opt.control_cpus >= 1 || throw(ArgumentError("pipeline concurrency settings are invalid"))
-    all(mu -> mu in spec.mus, opt.guard_mus) ||
-        throw(ArgumentError("Every pipeline.guard_mus value must be part of the initial scout"))
     return opt
 end
 
