@@ -234,25 +234,23 @@ julia --project=. scripts/fast_ed.jl release-cache \
 
 ## 当前自动N=7点（2026-09-14）
 
-Vf0=0.45生产点已完成并通过本地raw审计，接受实测`mu=0.152375`、
-`q=0.059984643683743934`。下一点使用
-`config/fast_ed/n7_vf0_065_auto.toml`计算`Uf0=1.834,Vf0=0.65,V0=0.34`；N5/N6阻尼
-延拓中心为`0.13906878159784`。仍是一点一cache、每个sector任务8CPU/8线程、最多四个
-并发，完成后只下载最终tar.gz和sha256。启动脚本在登录节点只检查空队列并提交一个1 CPU
-bootstrap；Julia加载/预编译、旧cache核验与受控清理、流水线初始化都在bootstrap allocation
-内完成。
+`config/fast_ed/n7_original_audit_auto.toml`计算stage1--12之前最终locator audit建议的原始
+Hamiltonian：`(Uf,Uf0,U0,Vf,Vf0,V0,t)=(0.46,1.834,4.14,0,0.41,0.525,0.5)`。
+N5/N6五项q定位结果分别为`mu=0.1220681019828/0.1218143040052`、
+`q=0.11755568086489525/0.06517470973203797`。阻尼延拓中心为`0.1216874050164`，首次
+五点scout为`0.1116874050164–0.1316874050164`，共20个独立sector task。
 
-Vf0=0.45的服务器cache只有在本地归档SHA
-`f4f75f0e9248244e802b944f99d4f6a1bb3548739d57ebf4abc6a4d51d661372`已经核验、队列为空，
-且`n7_vf0_045_cache_retirement.toml`实际计算、manifest与手输ID都严格对应
-`342e15745d81a91a`时才可受控释放。
-retained中心cache继续保护。自动归档现包含`final/pipeline_state.toml`完成态快照；live状态
-仍在SHA核验后才改成complete，避免包内保留打包前的bundle状态。
+旧N5/N6宽扫描覆盖`mu=0.05778640450004–0.21057280900008`；两个尺寸均只有一个离散局部
+q极小值，local refine与wide Brent的最优mu相差约`4e-5`，所以该N7点不设人为guard。
+流程仍是一点一cache、每个sector任务8CPU/8线程、最多四个并发，完成后只下载最终tar.gz
+和sha256。启动脚本在登录节点只检查空队列并提交一个1 CPU bootstrap；Julia加载/预编译、
+旧cache核验与受控清理、流水线初始化都在bootstrap allocation内完成。
 
-Vf0=.65的五点主scout为`0.12906878159784–0.14906878159784`。由于N6在
-`mu=0.12771774983325`另有一个q较高的局部谷，首次scout额外计算这一点作guard，共6个mu、
-24个独立sector task，仍最多只有4个任务同时占用资源。guard若无效会停止进入review，
-不会被当成大q；若比主谷更低，则有界流程转向该侧扩展。
+上一点Vf0=.65已经完成本地raw与归档SHA审计。其服务器cache只有在
+`n7_vf0_065_cache_retirement.toml`实际计算、manifest与手输ID都严格对应
+`acae800d795e294b`，且本地归档SHA严格等于
+`e2f3e2f6545e8a7026ff402e8fb06271d3a8650e990751b5e6a27f08244f1d77`时才可受控释放。
+retained中心cache继续保护。新原始点的`auto_release=false`，必须等其最终包下载并独立审计。
 
 ## 已完成的本地等价性检查
 

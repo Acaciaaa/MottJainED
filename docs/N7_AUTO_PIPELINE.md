@@ -1,7 +1,7 @@
 # N=7 有界自动分段流程
 
-`Uf0=2.00, Vf0=0.55, V0=0.34` pilot和`Vf0=0.45`生产点均已完成并通过本地raw复核；
-当前生产点是`Uf0=1.834, Vf0=0.65, V0=0.34`。流程复用已经验证过的
+局部Hamiltonian五点已经完成并通过本地raw复核；当前生产点回到stage1--12之前最终
+locator audit建议的`Uf0=1.834,Vf0=0.41,V0=0.525`。流程复用已经验证过的
 “共享矩阵 cache + 独立 `(mu,sector)` array”算法，只自动执行每批结果之后的小文件审计、
 下一批局部网格选择和 Slurm 提交。它不会调用旧 `FastMuSearch`、不会做全区间优化，
 也不会在等待时占着 CPU。
@@ -17,7 +17,7 @@
 4. 只有实测最低点左右都有距离不超过 `0.000251` 的有效点、两侧 q 均回升、二次拟合
    对 q 的改进不超过 `1e-5`，且 factor/五条 raw gap 局部连续时才接受。否则只补一至
    两个点。
-5. 最多 16 个不同 mu、最多三轮自适应提交，且 mu 必须留在 `(0.12,0.18)`。
+5. 最多 16 个不同 mu、最多三轮自适应提交，且 mu 必须留在profile各自的显式边界内。
    达到边界/预算、缺谱、身份冲突或连续性失败时立即进入 `review`，不再提交 ED。
 
 接受的是实际算过的最低点。最终审计明确保留“有限网格结果，不证明全局最低点或热力学
@@ -64,20 +64,20 @@ live状态只在归档SHA验证后才原子更新为`complete`并记录实际SHA
 
 ## 服务器入口
 
-Vf0=0.45最终包已在本地逐文件核验，服务器cache ID为`342e15745d81a91a`。Vf0=0.65配置
-列出已经核验过的旧cache retirement profiles。用户入口先用纯shell检查队列并只提交一个
+Vf0=.65最终包已在本地逐文件核验，服务器cache ID为`acae800d795e294b`。原始audit点配置
+列出所有已经核验过的旧cache retirement profiles。用户入口先用纯shell检查队列并只提交一个
 1 CPU bootstrap；bootstrap在计算节点完成Julia预编译、旧cache的ID/完整manifest核验与释放，
 然后启动prepare、scout和后续controller。登录节点不再启动Julia，也不需要手工执行cache检查。
 retained中心cache仍由底层命令独立保护。
 
-该点N5/N6为`mu=0.13608278512369/0.13807344943979`，阻尼中心`0.13906878159784`，
-五点主scout范围为`0.12906878159784–0.14906878159784`。N6另有一个已确认但q较高的局部谷
-`mu=0.12771774983325`，所以首次额外实算这一个guard点，共6个mu、24个sector task：
+该点N5/N6为`mu=0.1220681019828/0.1218143040052`，阻尼中心`0.1216874050164`，
+五点主scout范围为`0.1116874050164–0.1316874050164`。N5/N6宽区间评价均只有一个局部
+q极小值，因此不加guard，共5个mu、20个sector task：
 
 ```bash
-bash scripts/submit_fast_ed_pipeline.sh config/fast_ed/n7_vf0_065_auto.toml
+bash scripts/submit_fast_ed_pipeline.sh config/fast_ed/n7_original_audit_auto.toml
 ```
 
 状态文件位于
-`output/fast_ed/pipelines/n7_vf0_065_auto/pipeline_state.toml`。若状态为 `review`，说明流程
+`output/fast_ed/pipelines/n7_original_audit_auto/pipeline_state.toml`。若状态为 `review`，说明流程
 已停止且 cache 保留；不要直接重启或删除文件，应根据 `review_reason` 做一次针对性处理。

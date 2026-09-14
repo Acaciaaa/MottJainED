@@ -1,0 +1,94 @@
+# Original Hamiltonian recommended by the completed locator audit, before the
+# stage1--12 DeltaS-flatness scans. N=5 and N=6 each have one audited q valley.
+
+[model]
+nm1 = 7
+
+[hamiltonian]
+Uf = 0.46
+Uf0 = 1.834
+U0 = 4.14
+Vf = 0.0
+Vf0 = 0.41
+V0 = 0.525
+t = 0.5
+mu = 0.1216874050164
+
+[solver]
+k = 20
+eig_tol = 1.0e-8
+energy_tol = 1.0e-7
+quantum_tol = 2.0e-3
+degeneracy_tol = 2.0e-6
+dense_cutoff = 128
+ncv_extra = 12
+warm_start = false
+
+[fast_ed]
+run_name = "n7_original_audit_auto_scout"
+cache_root = "output/fast_ed/cache"
+result_root = "output/fast_ed/runs"
+k = 20
+mus = [
+    0.1116874050164,
+    0.1166874050164,
+    0.1216874050164,
+    0.1266874050164,
+    0.1316874050164,
+]
+score_terms = ["ds_s", "j", "curlj", "dj_rank1", "t_rank1"]
+score_metric = "q"
+allow_cache_release = false
+
+[pipeline]
+name = "n7_original_audit_auto"
+state_root = "output/fast_ed/pipelines"
+archive_root = "output/fast_ed/archives"
+scan_parameter = "Vf0"
+scan_value = 0.41
+n5_mu = 0.1220681019828
+n6_mu = 0.1218143040052
+n5_q = 0.11755568086489525
+n6_q = 0.06517470973203797
+n5_factor = 0.04274007810075604
+n6_factor = 0.03841379870372176
+n5_delta_s = 1.4611807307943308
+n6_delta_s = 1.4117848764392682
+n5_delta_o = 3.1608807086094144
+n6_delta_o = 3.0224153568005727
+scout_step = 0.005
+fine_step = 0.00025
+fit_snap_step = 0.000125
+fine_count = 7
+max_adaptive_rounds = 3
+max_total_mus = 16
+mu_min = 0.08
+mu_max = 0.17
+accept_neighbor_distance = 0.000251
+q_fit_improvement_tol = 1.0e-5
+max_quantum_error = 5.0e-4
+max_copy_split = 2.0e-6
+max_factor_relative_jump = 0.05
+max_gap_relative_jump = 0.05
+
+# The broad N=5/N=6 evaluation tables contain only one local q minimum.
+guard_mus = []
+
+prepare_cpus = 8
+prepare_threads = 8
+solve_cpus = 8
+solve_threads = 8
+max_concurrent = 4
+control_cpus = 1
+
+# Every listed cache has an independently downloaded and SHA-verified archive.
+# Missing old caches are harmless; the retained-center cache remains protected.
+retire_before_start = [
+    "config/fast_ed/n7_uf0_165_cache_retirement.toml",
+    "config/fast_ed/n7_uf0_200_cache_retirement.toml",
+    "config/fast_ed/n7_vf0_045_cache_retirement.toml",
+    "config/fast_ed/n7_vf0_065_cache_retirement.toml",
+]
+
+# Keep the new baseline cache until its final archive is downloaded and audited.
+auto_release = false

@@ -140,6 +140,9 @@ end
     next_path = joinpath(root, "config", "fast_ed", "n7_vf0_045_auto.toml")
     vf0_retirement_path = joinpath(root, "config", "fast_ed", "n7_vf0_045_cache_retirement.toml")
     final_vf0_path = joinpath(root, "config", "fast_ed", "n7_vf0_065_auto.toml")
+    final_vf0_retirement_path = joinpath(root, "config", "fast_ed",
+                                         "n7_vf0_065_cache_retirement.toml")
+    original_path = joinpath(root, "config", "fast_ed", "n7_original_audit_auto.toml")
     pilot = FastED.load_spec(pilot_path)
     opt = FastEDPipeline.pipeline_options(pilot)
 
@@ -221,6 +224,43 @@ end
         "config/fast_ed/n7_uf0_165_cache_retirement.toml",
         "config/fast_ed/n7_uf0_200_cache_retirement.toml",
         "config/fast_ed/n7_vf0_045_cache_retirement.toml",
+    ]
+
+    final_vf0_retirement = FastED.load_spec(final_vf0_retirement_path)
+    final_vf0_retirement_config = TOML.parsefile(final_vf0_retirement_path)
+    @test final_vf0_retirement.cache_id == final_vf0.cache_id
+    @test final_vf0_retirement_config["cache_retirement"]["expected_cache_id"] ==
+          "acae800d795e294b"
+    @test final_vf0_retirement_config["cache_retirement"]["verified_local_archive_sha256"] ==
+          "e2f3e2f6545e8a7026ff402e8fb06271d3a8650e990751b5e6a27f08244f1d77"
+
+    original = FastED.load_spec(original_path)
+    original_opt = FastEDPipeline.pipeline_options(original)
+    original_damped = original_opt.n6_mu + 0.5*(original_opt.n6_mu-original_opt.n5_mu)
+    @test original.nm1 == 7 && original.solver.k == 20 && !original.solver.warm_start
+    @test original.couplings == FastED.Couplings(
+        Uf=0.46, Uf0=1.834, U0=4.14, Vf=0.0, Vf0=0.41, V0=0.525,
+        t=0.5, mu=original_damped,
+    )
+    @test original.mus ≈ original_damped .+ [-0.01, -0.005, 0.0, 0.005, 0.01] atol=1e-14
+    @test original.terms == pilot.terms && original.metric == :q
+    @test FastED.plan(original).tasks == 20
+    @test FastEDPipeline.resource_fields(original_path) == (8, 8, 8, 8, 4, 1)
+    @test original_opt.scan_parameter == "Vf0" && original_opt.scan_value == 0.41
+    @test original_opt.n5_q == 0.11755568086489525
+    @test original_opt.n6_q == 0.06517470973203797
+    @test original_opt.n5_delta_s == 1.4611807307943308
+    @test original_opt.n6_delta_o == 3.0224153568005727
+    @test isempty(original_opt.guard_mus)
+    @test original_opt.max_total_mus == 16
+    @test original_opt.mu_min == 0.08 && original_opt.mu_max == 0.17
+    @test original.cache_id != final_vf0.cache_id
+    original_config = TOML.parsefile(original_path)
+    @test original_config["pipeline"]["retire_before_start"] == [
+        "config/fast_ed/n7_uf0_165_cache_retirement.toml",
+        "config/fast_ed/n7_uf0_200_cache_retirement.toml",
+        "config/fast_ed/n7_vf0_045_cache_retirement.toml",
+        "config/fast_ed/n7_vf0_065_cache_retirement.toml",
     ]
 
     mktempdir() do directory
