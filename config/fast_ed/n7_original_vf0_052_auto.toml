@@ -1,0 +1,90 @@
+# Second N=7 local endpoint around the original locator-audit baseline.
+# The N=5/N=6 searches passed continuation and wide-challenger audits. This
+# bounded pipeline retires only the independently archived prior local point.
+
+[model]
+nm1 = 7
+
+[hamiltonian]
+Uf = 0.46
+Uf0 = 1.834
+U0 = 4.14
+Vf = 0.0
+Vf0 = 0.52
+V0 = 0.525
+t = 0.5
+mu = 0.112517687151475
+
+[solver]
+k = 20
+eig_tol = 1.0e-8
+energy_tol = 1.0e-7
+quantum_tol = 2.0e-3
+degeneracy_tol = 2.0e-6
+dense_cutoff = 128
+ncv_extra = 12
+warm_start = false
+
+[fast_ed]
+run_name = "n7_original_vf0_052_auto_scout"
+cache_root = "output/fast_ed/cache"
+result_root = "output/fast_ed/runs"
+k = 20
+mus = [
+    0.102517687151475,
+    0.107517687151475,
+    0.112517687151475,
+    0.117517687151475,
+    0.122517687151475,
+]
+score_terms = ["ds_s", "j", "curlj", "dj_rank1", "t_rank1"]
+score_metric = "q"
+allow_cache_release = false
+
+[pipeline]
+name = "n7_original_vf0_052_auto"
+state_root = "output/fast_ed/pipelines"
+archive_root = "output/fast_ed/archives"
+scan_parameter = "Vf0"
+scan_value = 0.52
+n5_mu = 0.11307786788428
+n6_mu = 0.11270441406241
+n5_q = 0.1084034224823743
+n6_q = 0.0725442138872437
+n5_factor = 0.0381956042627588
+n6_factor = 0.0341222647875728
+n5_delta_s = 1.5077691100575907
+n6_delta_s = 1.4727243986238518
+n5_delta_o = 3.1016632046074264
+n6_delta_o = 2.9758958354340583
+scout_step = 0.005
+fine_step = 0.00025
+fit_snap_step = 0.000125
+fine_count = 7
+max_adaptive_rounds = 3
+max_total_mus = 16
+mu_min = 0.07
+mu_max = 0.16
+accept_neighbor_distance = 0.000251
+q_fit_improvement_tol = 1.0e-5
+max_quantum_error = 5.0e-4
+max_copy_split = 2.0e-6
+max_factor_relative_jump = 0.05
+max_gap_relative_jump = 0.05
+
+# N=3/4 each found one guide valley and N=5/6 local/wide searches agree.
+guard_mus = []
+
+prepare_cpus = 8
+prepare_threads = 8
+solve_cpus = 8
+solve_threads = 8
+max_concurrent = 4
+control_cpus = 1
+
+# The prior local point has a downloaded and independently verified archive.
+# Both center caches and every unrelated Hamiltonian remain protected.
+retire_before_start = [
+    "config/fast_ed/n7_original_uf0_165_cache_retirement.toml",
+]
+auto_release = false

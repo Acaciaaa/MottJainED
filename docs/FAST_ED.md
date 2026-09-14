@@ -298,6 +298,25 @@ bash scripts/submit_fast_ed_pipeline.sh config/fast_ed/n7_original_uf0_165_auto.
 正常完成后只需下载 `output/fast_ed/archives/n7_original_uf0_165_auto_final.tar.gz`
 及对应 `.sha256`；不要在服务器运行 collect，也不必例行下载日志或 sacct。
 
+首个局部点已完成并通过独立 raw-spectrum 审计。第二个 N=7 点使用
+`config/fast_ed/n7_original_vf0_052_auto.toml`，Hamiltonian 为
+`(Uf0,Vf0,V0)=(1.834,0.52,0.525)`。N=5/6 的 muc 为
+`0.11307786788428/0.11270441406241`，阻尼延拓中心为 `0.112517687151475`；首轮仍为
+中心及其 `±0.005,±0.01` 五点，共 20 个 sector task。N=3/4 各只有一个引导 valley，且
+N=5/6 local/wide 一致，因此不另设 guard。
+
+启动时只会通过 `n7_original_uf0_165_cache_retirement.toml` 受控释放刚刚完成、已经下载并
+审计的 `nm7_3bfe378c1c294c11`。retirement profile 同时核对该 cache ID、manifest身份与
+归档SHA `0a0479121496c7e05e4011f3e1835a273a4495af420e713b34c112396a56a185`；两个中心
+cache及其他Hamiltonian不在清理列表中。新点保持 `auto_release=false`。
+
+```bash
+bash scripts/submit_fast_ed_pipeline.sh config/fast_ed/n7_original_vf0_052_auto.toml
+```
+
+正常完成后下载 `output/fast_ed/archives/n7_original_vf0_052_auto_final.tar.gz` 及对应
+`.sha256`，再在本地独立审计并合并 N=5/6/7。
+
 ## 已完成的本地等价性检查
 
 - N=5、k=20：80 态键完全相同，最大能量误差 `3.24e-14`，最大 L2/C2
