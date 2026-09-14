@@ -582,3 +582,46 @@ end
     @test length(hamiltonian_points) == 5
     @test (1.834, 0.55) in hamiltonian_points
 end
+
+@testset "Original-audit local FSS stops at N=6" begin
+    root = joinpath(@__DIR__, "..")
+    profile_root = joinpath(root, "config", "two_size_tuning")
+    reference = TOML.parsefile(joinpath(profile_root, "s_stage12_vf_retained.toml"))
+    search_keys = filter(key -> startswith(key, "optimize_") || startswith(key, "mu_") ||
+        startswith(key, "score_") || key == "k", keys(reference["two_size_tuning"]))
+    fixed = Dict(
+        "Uf" => 0.46, "U0" => 4.14, "Vf" => 0.0, "V0" => 0.525, "t" => 0.5,
+    )
+    cases = (
+        ("n56_original_uf0_165.toml", "Uf0", 1.65, 1.65, 0.41),
+        ("n56_original_uf0_200.toml", "Uf0", 2.00, 2.00, 0.41),
+        ("n56_original_vf0_030.toml", "Vf0", 0.30, 1.834, 0.30),
+        ("n56_original_vf0_052.toml", "Vf0", 0.52, 1.834, 0.52),
+    )
+    points = Set{Tuple{Float64,Float64}}()
+    for (name, parameter, value, uf0, vf0) in cases
+        config = TOML.parsefile(joinpath(profile_root, name))
+        hamiltonian = config["hamiltonian"]
+        tuning = config["two_size_tuning"]
+        @test tuning["guide_nm_values"] == [3, 4]
+        @test tuning["match_nm_values"] == [5, 6]
+        @test maximum(vcat(tuning["guide_nm_values"], tuning["match_nm_values"])) == 6
+        @test tuning["scan_parameter"] == parameter
+        @test tuning["scan_values"] == [value]
+        @test hamiltonian["Uf0"] == uf0 && hamiltonian["Vf0"] == vf0
+        for (key, expected) in fixed
+            @test hamiltonian[key] == expected
+        end
+        for key in search_keys
+            @test tuning[key] == reference["two_size_tuning"][key]
+        end
+        push!(points, (uf0, vf0))
+    end
+    @test length(points) == 4
+    @test !((1.834, 0.41) in points)
+
+    submission = read(joinpath(root, "slurm", "fss_original_local_n56.sbatch"), String)
+    @test occursin("#SBATCH --array=0-3%4", submission)
+    @test count(name -> occursin(name, submission), first.(cases)) == 4
+    @test !occursin("scripts/fast_ed.jl", submission)
+end

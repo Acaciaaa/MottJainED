@@ -252,6 +252,26 @@ q极小值，local refine与wide Brent的最优mu相差约`4e-5`，所以该N7�
 `e2f3e2f6545e8a7026ff402e8fb06271d3a8650e990751b5e6a27f08244f1d77`时才可受控释放。
 retained中心cache继续保护。新原始点的`auto_release=false`，必须等其最终包下载并独立审计。
 
+## 原始 audit 基线的 Uf0/Vf0 局部 N=5/6（等待结果）
+
+原中心 `(Uf0,Vf0)=(1.834,0.41)` 的 N=5/6 已完成并通过审计，不重复计算。围绕它只新增
+四个 Hamiltonian：`(1.65,0.41)`、`(2.00,0.41)`、`(1.834,0.30)`、
+`(1.834,0.52)`；其余耦合固定为原始 audit 基线
+`(Uf,U0,Vf,V0,t)=(0.46,4.14,0,0.525,0.5)`。
+
+`slurm/fss_original_local_n56.sbatch` 把四点拆成四个独立 array task，最多四个并发。
+每个 task 只运行 `scripts/two_size_tuning.jl`：N=3、4 做宽范围 muc 引导，N=5、6
+续接并进入 matching；`k=30`、五项 q score 和 stage12 的 adaptive wide audit 保持不变。
+任务在 N=6 审计和输出后停止，不会提交、生成或清理任何 N=7 cache。
+
+```bash
+mkdir -p slurm-logs
+sbatch slurm/fss_original_local_n56.sbatch
+```
+
+首次运行对应四个 `output/two_size_tuning/n56_original_*_01/` 目录。下载并联合原中心
+检查 N=5/6 的 muc、q、factor、DeltaS、DeltaO 与 drift 后，再决定是否以及按什么顺序算 N=7。
+
 ## 已完成的本地等价性检查
 
 - N=5、k=20：80 态键完全相同，最大能量误差 `3.24e-14`，最大 L2/C2
