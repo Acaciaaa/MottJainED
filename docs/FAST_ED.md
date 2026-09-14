@@ -317,6 +317,36 @@ bash scripts/submit_fast_ed_pipeline.sh config/fast_ed/n7_original_vf0_052_auto.
 正常完成后下载 `output/fast_ed/archives/n7_original_vf0_052_auto_final.tar.gz` 及对应
 `.sha256`，再在本地独立审计并合并 N=5/6/7。
 
+`Vf0=0.52`最终包现已下载并通过SHA、raw谱及三尺寸审计。下一组先补齐Uf0方向的另一端
+`config/fast_ed/n7_original_uf0_200_auto.toml`，Hamiltonian为
+`(Uf0,Vf0,V0)=(2.00,0.41,0.525)`。这一组N=5/6早已完成并通过continuation与wide
+challenger检查，不重复计算：
+
+```text
+N5: mu=0.12312711168687, q=0.144934837156014,
+    factor=0.0472322641682251, DeltaS=1.387618005563944,
+    DeltaO=3.229029868809076
+N6: mu=0.12255263823517, q=0.08325124867871257,
+    factor=0.04237699102820816, DeltaS=1.3327838354678343,
+    DeltaO=3.08297794027735
+```
+
+阻尼延拓中心为`0.12226540150932`，初始五点为中心及`±.005,±.01`，共20个sector
+task。N=3/4各只有一个guide valley，N=5/6 local/wide一致，故`guard_mus=[]`。资源、
+验收阈值、未snap拟合顶点恢复和16个mu硬上限与上一点完全相同。
+
+启动前仅通过`n7_original_vf0_052_cache_retirement.toml`定向释放已经审计的服务器cache
+`nm7_e4ca339201f16721`；它核对实际cache ID、manifest和最终包SHA
+`06ff8d296524142754d0b1e3f710cf987e406e81725e5b2d49483f636e9408eb`。两个中心cache及其他
+Hamiltonian不在清理范围内。新点仍`auto_release=false`。
+
+```bash
+bash scripts/submit_fast_ed_pipeline.sh config/fast_ed/n7_original_uf0_200_auto.toml
+```
+
+正常完成后下载`output/fast_ed/archives/n7_original_uf0_200_auto_final.tar.gz`及同名
+`.sha256`。Uf0方向完成后，原baseline局部候选只剩`Vf0=0.30`的N7。
+
 ## 已完成的本地等价性检查
 
 - N=5、k=20：80 态键完全相同，最大能量误差 `3.24e-14`，最大 L2/C2

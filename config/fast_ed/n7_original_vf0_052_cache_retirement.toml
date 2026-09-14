@@ -1,0 +1,40 @@
+# Exact retirement identity for the independently verified original-baseline
+# Vf0=0.52 N=7 result. Neither center cache is targeted by this profile.
+
+[model]
+nm1 = 7
+
+[hamiltonian]
+Uf = 0.46
+Uf0 = 1.834
+U0 = 4.14
+Vf = 0.0
+Vf0 = 0.52
+V0 = 0.525
+t = 0.5
+mu = 0.11245003432673
+
+[solver]
+k = 20
+eig_tol = 1.0e-8
+energy_tol = 1.0e-7
+quantum_tol = 2.0e-3
+degeneracy_tol = 2.0e-6
+dense_cutoff = 128
+ncv_extra = 12
+warm_start = false
+
+[fast_ed]
+run_name = "n7_original_vf0_052_cache_retirement"
+cache_root = "output/fast_ed/cache"
+result_root = "output/fast_ed/runs"
+k = 20
+mus = [0.11245003432673]
+score_terms = ["ds_s", "j", "curlj", "dj_rank1", "t_rank1"]
+score_metric = "q"
+allow_cache_release = false
+
+[cache_retirement]
+expected_cache_id = "e4ca339201f16721"
+verified_local_archive = "output/fast_ed/archives/n7_original_vf0_052_auto_final.tar.gz"
+verified_local_archive_sha256 = "06ff8d296524142754d0b1e3f710cf987e406e81725e5b2d49483f636e9408eb"
