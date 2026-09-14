@@ -431,6 +431,20 @@ end
     @test FastEDPipeline.decide_next(edge_rows, edge_mus, "followup", 3, opt).reason ==
           "adaptive_round_limit"
 
+    # Regression for the Vf0=.52 review: the fitted vertex lay between valid,
+    # rising neighbors, but the configured snap mapped it onto the sampled
+    # minimum.  Preserve the strict acceptance threshold and solve the actual
+    # fitted vertex instead of stopping with no_new_followup_points.
+    stalled_mus = [0.112375, 0.1125, 0.112517687151475]
+    stalled_curve(mu) = sqrt(0.0534^2 + 1000*(mu-0.11245)^2)
+    stalled_rows = [make_row(mu, stalled_curve(mu)) for mu in stalled_mus]
+    stalled = FastEDPipeline.decide_next(stalled_rows, [0.1125], "followup", 2,
+                                         original_vf052_opt)
+    @test stalled.action == "solve" && stalled.kind == "followup"
+    @test stalled.reason == "sample_unsnapped_fit_vertex"
+    @test length(stalled.mus) == 1
+    @test stalled.mus[1] ≈ 0.11245 atol=1e-13 rtol=0
+
     mktempdir() do directory
         config = TOML.parsefile(pilot_path)
         config["pipeline"]["name"] = "state_test"
@@ -535,6 +549,7 @@ end
     launcher = read(joinpath(root, "scripts", "submit_fast_ed_pipeline.sh"), String)
     bootstrap = read(joinpath(root, "slurm", "fast_ed_pipeline_bootstrap.sbatch"), String)
     controller = read(joinpath(root, "slurm", "fast_ed_pipeline_controller.sbatch"), String)
+    recovery = read(joinpath(root, "slurm", "fast_ed_pipeline_review_recovery.sbatch"), String)
     cli = read(joinpath(root, "scripts", "fast_ed_pipeline.jl"), String)
     @test occursin(raw"%${max_concurrent}", launcher)
     @test occursin(raw"afterany:$solve_job", launcher)
@@ -544,7 +559,10 @@ end
     @test occursin("retire-configured-caches", cli)
     @test occursin(raw"%${max_concurrent}", controller)
     @test occursin(raw"afterany:$solve_job", controller)
-    @test !occursin("sleep ", launcher*bootstrap*controller)
+    @test occursin("resume-stalled-fit", recovery)
+    @test occursin("fast_ed_pipeline_controller.sbatch", recovery)
+    @test occursin("resume-stalled-fit", cli)
+    @test !occursin("sleep ", launcher*bootstrap*controller*recovery)
 end
 
 @testset "Fresh N7 five-point scout uses the validated array workflow" begin

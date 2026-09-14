@@ -81,3 +81,15 @@ bash scripts/submit_fast_ed_pipeline.sh config/fast_ed/n7_original_audit_auto.to
 状态文件位于
 `output/fast_ed/pipelines/n7_original_audit_auto/pipeline_state.toml`。若状态为 `review`，说明流程
 已停止且 cache 保留；不要直接重启或删除文件，应根据 `review_reason` 做一次针对性处理。
+
+若审计确认唯一原因是`review_reason=no_new_followup_points`，并且原因是q²拟合顶点被
+`fit_snap_step`吸附回已经计算的点，可在更新到含恢复逻辑的提交后提交一次一CPU恢复任务：
+
+```bash
+sbatch --export="ALL,PROJECT_ROOT=$PWD,BASE_CONFIG=$PWD/config/fast_ed/<profile>.toml" \
+  slurm/fast_ed_pipeline_review_recovery.sbatch
+```
+
+恢复任务会重新审计现有raw文件；只有新决策精确为`sample_unsnapped_fit_vertex`时才恢复。
+随后只计算该未吸附拟合顶点的四个sector，并继续走原来的严格验收和归档流程；不会重建
+cache或重算已经完成的mu点。其他`review_reason`仍拒绝自动恢复。

@@ -152,6 +152,7 @@ Usage:
   julia --project=. scripts/fast_ed_pipeline.jl action --config=PROFILE
   julia --project=. scripts/fast_ed_pipeline.jl resources --config=PROFILE
   julia --project=. scripts/fast_ed_pipeline.jl review --config=PROFILE --reason=TEXT
+  julia --project=. scripts/fast_ed_pipeline.jl resume-stalled-fit --config=PROFILE
   julia --project=. scripts/fast_ed_pipeline.jl mark-bundled --config=PROFILE --archive=PATH --sha256=HEX
   julia --project=. scripts/fast_ed_pipeline.jl inspect-cache --config=PROFILE
   julia --project=. scripts/fast_ed_pipeline.jl retire-cache --config=PROFILE --confirm-cache-id=ID
@@ -196,6 +197,9 @@ elseif command == "resources"
     print_fields(FastEDPipeline.resource_fields(path))
 elseif command == "review"
     FastEDPipeline.mark_review(path, required(options, "reason"))
+    print_fields(FastEDPipeline.action_fields(path))
+elseif command == "resume-stalled-fit"
+    FastEDPipeline.resume_stalled_fit(path)
     print_fields(FastEDPipeline.action_fields(path))
 elseif command == "mark-bundled"
     archive = project_path(required(options, "archive"))

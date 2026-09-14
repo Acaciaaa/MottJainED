@@ -276,6 +276,7 @@ function decide_next(rows, latest_mus, stage::AbstractString, round::Integer, op
     end
 
     triplet = score_triplet(ordered, best_index)
+    unsnapped_fit_vertex = nothing
     if triplet !== nothing
         left, right = ordered[best_index-1], ordered[best_index+1]
         close = best.mu-left.mu <= opt.accept_neighbor_distance &&
@@ -290,6 +291,11 @@ function decide_next(rows, latest_mus, stage::AbstractString, round::Integer, op
         if close && rises && triplet.improvement <= opt.q_fit_improvement_tol && continuous
             return (action="accept", kind="final", mus=Float64[], reason="measured_minimum_bracketed",
                     best=best, triplet=triplet, factor_jump=factor_jump, gap_jump=gap_jump)
+        elseif close && rises && continuous && triplet.improvement > opt.q_fit_improvement_tol
+            # A coarse snap can map a still-useful fitted vertex back onto an
+            # already sampled point.  Keep the strict acceptance tolerance and
+            # use the unsnapped fitted vertex only as a real follow-up solve.
+            unsnapped_fit_vertex = key(triplet.vertex)
         end
     end
 
@@ -318,11 +324,18 @@ function decide_next(rows, latest_mus, stage::AbstractString, round::Integer, op
         triplet === nothing || push!(candidates, snap(triplet.vertex, opt.fit_snap_step))
     end
     mus = fresh_mus(candidates, existing, opt)
+    used_unsnapped_fit_vertex = false
+    if isempty(mus) && unsnapped_fit_vertex !== nothing
+        mus = fresh_mus([unsnapped_fit_vertex], existing, opt)
+        used_unsnapped_fit_vertex = !isempty(mus)
+    end
     remaining = opt.max_total_mus-length(existing)
     remaining > 0 || return (action="review", kind="none", mus=Float64[], reason="mu_budget_exhausted")
     length(mus) > remaining && (mus = mus[1:remaining])
     isempty(mus) && return (action="review", kind="none", mus=mus, reason="no_new_followup_points")
-    return (action="solve", kind="followup", mus=mus, reason="tighten_or_bracket_measured_minimum")
+    reason = used_unsnapped_fit_vertex ? "sample_unsnapped_fit_vertex" :
+             "tighten_or_bracket_measured_minimum"
+    return (action="solve", kind="followup", mus=mus, reason=reason)
 end
 
 function generated_profile(base, opt, kind, round, mus)
@@ -599,6 +612,34 @@ function mark_review(config_path::AbstractString, reason::AbstractString)
     return state
 end
 
+"""Resume only the audited fit-snap deadlock after code can propose a fresh vertex."""
+function resume_stalled_fit(config_path::AbstractString)
+    base = FastED.load_spec(config_path); opt = pipeline_options(base); state = read_state(opt)
+    String(state["action"]) == "review" || throw(ArgumentError(
+        "resume-stalled-fit requires action=review, got $(state["action"])",
+    ))
+    reason = String(get(state, "review_reason", ""))
+    reason == "no_new_followup_points" || throw(ArgumentError(
+        "resume-stalled-fit only handles review_reason=no_new_followup_points, got $reason",
+    ))
+    profiles = String.(state["profiles"])
+    analysis = validate_and_score(profiles, opt)
+    isempty(analysis.issues) || throw(ArgumentError(
+        "Cannot resume a pipeline with audit issues: $(join(analysis.issues, ","))",
+    ))
+    latest = FastED.load_spec(last(profiles))
+    decision = decide_next(analysis.rows, latest.mus, String(state["stage"]),
+                           Int(state["adaptive_round"]), opt)
+    decision.action == "solve" && decision.reason == "sample_unsnapped_fit_vertex" ||
+        throw(ArgumentError("The reviewed data do not produce an unsnapped fit-vertex solve"))
+    state["resolved_review_reason"] = reason
+    delete!(state, "review_reason")
+    state["action"] = "awaiting_results"
+    state["updated_at"] = string(now())
+    write_state(opt, state)
+    return state
+end
+
 function reset_launch(config_path::AbstractString)
     base = FastED.load_spec(config_path); opt = pipeline_options(base); state = read_state(opt)
     String(state["action"]) == "launching" || throw(ArgumentError(
@@ -612,6 +653,6 @@ end
 
 export pipeline_options, initialize, claim_launch, record_submission, parabolic_fit,
        decide_next, validate_and_score, advance, mark_bundled, action_fields,
-       resource_fields, mark_review, reset_launch, state_path
+       resource_fields, mark_review, resume_stalled_fit, reset_launch, state_path
 
 end
