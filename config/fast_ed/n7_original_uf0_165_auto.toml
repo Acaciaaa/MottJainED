@@ -1,0 +1,88 @@
+# First N=7 local endpoint around the promoted original locator-audit baseline.
+# The N=5/N=6 searches passed continuation and wide-challenger audits. This
+# bounded pipeline is a one-Hamiltonian run and does not retire either center.
+
+[model]
+nm1 = 7
+
+[hamiltonian]
+Uf = 0.46
+Uf0 = 1.65
+U0 = 4.14
+Vf = 0.0
+Vf0 = 0.41
+V0 = 0.525
+t = 0.5
+mu = 0.12139298275993
+
+[solver]
+k = 20
+eig_tol = 1.0e-8
+energy_tol = 1.0e-7
+quantum_tol = 2.0e-3
+degeneracy_tol = 2.0e-6
+dense_cutoff = 128
+ncv_extra = 12
+warm_start = false
+
+[fast_ed]
+run_name = "n7_original_uf0_165_auto_scout"
+cache_root = "output/fast_ed/cache"
+result_root = "output/fast_ed/runs"
+k = 20
+mus = [
+    0.11139298275993,
+    0.11639298275993,
+    0.12139298275993,
+    0.12639298275993,
+    0.13139298275993,
+]
+score_terms = ["ds_s", "j", "curlj", "dj_rank1", "t_rank1"]
+score_metric = "q"
+allow_cache_release = false
+
+[pipeline]
+name = "n7_original_uf0_165_auto"
+state_root = "output/fast_ed/pipelines"
+archive_root = "output/fast_ed/archives"
+scan_parameter = "Uf0"
+scan_value = 1.65
+n5_mu = 0.12126476635669
+n6_mu = 0.12135024395885
+n5_q = 0.0999568257332489
+n6_q = 0.06254640447215823
+n5_factor = 0.03790095452441143
+n6_factor = 0.03412172635806117
+n5_delta_s = 1.5793229163256086
+n6_delta_s = 1.5391080254804494
+n5_delta_o = 3.0776240982227536
+n6_delta_o = 2.9532304784496852
+scout_step = 0.005
+fine_step = 0.00025
+fit_snap_step = 0.000125
+fine_count = 7
+max_adaptive_rounds = 3
+max_total_mus = 16
+mu_min = 0.08
+mu_max = 0.17
+accept_neighbor_distance = 0.000251
+q_fit_improvement_tol = 1.0e-5
+max_quantum_error = 5.0e-4
+max_copy_split = 2.0e-6
+max_factor_relative_jump = 0.05
+max_gap_relative_jump = 0.05
+
+# N=3/4 each found one guide valley and N=5/6 local/wide searches agree.
+guard_mus = []
+
+prepare_cpus = 8
+prepare_threads = 8
+solve_cpus = 8
+solve_threads = 8
+max_concurrent = 4
+control_cpus = 1
+
+# Preserve both the older stage-8 center and the promoted original baseline.
+# A completed local endpoint may be retired only after its archive is audited.
+retire_before_start = []
+auto_release = false

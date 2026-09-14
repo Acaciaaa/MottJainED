@@ -143,6 +143,8 @@ end
     final_vf0_retirement_path = joinpath(root, "config", "fast_ed",
                                          "n7_vf0_065_cache_retirement.toml")
     original_path = joinpath(root, "config", "fast_ed", "n7_original_audit_auto.toml")
+    original_uf165_path = joinpath(root, "config", "fast_ed",
+                                   "n7_original_uf0_165_auto.toml")
     pilot = FastED.load_spec(pilot_path)
     opt = FastEDPipeline.pipeline_options(pilot)
 
@@ -262,6 +264,44 @@ end
         "config/fast_ed/n7_vf0_045_cache_retirement.toml",
         "config/fast_ed/n7_vf0_065_cache_retirement.toml",
     ]
+
+    original_uf165 = FastED.load_spec(original_uf165_path)
+    original_uf165_opt = FastEDPipeline.pipeline_options(original_uf165)
+    original_uf165_damped = original_uf165_opt.n6_mu +
+                            0.5*(original_uf165_opt.n6_mu-original_uf165_opt.n5_mu)
+    @test original_uf165.nm1 == 7 && original_uf165.solver.k == 20
+    @test !original_uf165.solver.warm_start
+    @test original_uf165.couplings == FastED.Couplings(
+        Uf=0.46, Uf0=1.65, U0=4.14, Vf=0.0, Vf0=0.41, V0=0.525,
+        t=0.5, mu=0.12139298275993,
+    )
+    @test original_uf165.couplings.mu ≈ original_uf165_damped atol=1e-14
+    @test original_uf165.mus ≈
+          original_uf165_damped .+ [-0.01, -0.005, 0.0, 0.005, 0.01] atol=1e-14
+    @test original_uf165.terms == original.terms && original_uf165.metric == :q
+    @test FastED.plan(original_uf165).tasks == 20
+    @test FastEDPipeline.resource_fields(original_uf165_path) == (8, 8, 8, 8, 4, 1)
+    @test original_uf165_opt.scan_parameter == "Uf0"
+    @test original_uf165_opt.scan_value == 1.65
+    @test original_uf165_opt.n5_mu == 0.12126476635669
+    @test original_uf165_opt.n6_mu == 0.12135024395885
+    @test original_uf165_opt.n5_q == 0.0999568257332489
+    @test original_uf165_opt.n6_q == 0.06254640447215823
+    @test original_uf165_opt.n5_factor == 0.03790095452441143
+    @test original_uf165_opt.n6_factor == 0.03412172635806117
+    @test original_uf165_opt.n5_delta_s == 1.5793229163256086
+    @test original_uf165_opt.n6_delta_o == 2.9532304784496852
+    @test isempty(original_uf165_opt.guard_mus)
+    @test original_uf165_opt.max_total_mus == 16
+    @test original_uf165_opt.mu_min == 0.08 && original_uf165_opt.mu_max == 0.17
+    @test original_uf165.cache_id != original.cache_id
+    @test original_uf165.cache_id != prior_scout.cache_id
+    original_uf165_config = TOML.parsefile(original_uf165_path)
+    @test original_uf165_config["fast_ed"]["run_name"] ==
+          "n7_original_uf0_165_auto_scout"
+    @test !original_uf165_config["fast_ed"]["allow_cache_release"]
+    @test isempty(original_uf165_config["pipeline"]["retire_before_start"])
+    @test !original_uf165_config["pipeline"]["auto_release"]
 
     mktempdir() do directory
         missing_guard = deepcopy(final_config)

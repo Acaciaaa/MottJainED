@@ -252,7 +252,7 @@ q极小值，local refine与wide Brent的最优mu相差约`4e-5`，所以该N7�
 `e2f3e2f6545e8a7026ff402e8fb06271d3a8650e990751b5e6a27f08244f1d77`时才可受控释放。
 retained中心cache继续保护。新原始点的`auto_release=false`，必须等其最终包下载并独立审计。
 
-## 原始 audit 基线的 Uf0/Vf0 局部 N=5/6（等待结果）
+## 原始 audit 基线的 Uf0/Vf0 局部 N=5/6 与首个 N=7
 
 原中心 `(Uf0,Vf0)=(1.834,0.41)` 的 N=5/6 已完成并通过审计，不重复计算。围绕它只新增
 四个 Hamiltonian：`(1.65,0.41)`、`(2.00,0.41)`、`(1.834,0.30)`、
@@ -269,8 +269,34 @@ mkdir -p slurm-logs
 sbatch slurm/fss_original_local_n56.sbatch
 ```
 
-首次运行对应四个 `output/two_size_tuning/n56_original_*_01/` 目录。下载并联合原中心
-检查 N=5/6 的 muc、q、factor、DeltaS、DeltaO 与 drift 后，再决定是否以及按什么顺序算 N=7。
+首次运行对应四个 `output/two_size_tuning/n56_original_*_01/` 目录。四点均已下载并通过
+repository CSV audit 与基于 raw gaps/targets 的独立复算；N=5/6 均未落在边界，wide challenger
+收敛且与 local optimum 一致。联合原中心后的主要结果为：
+
+| 点 | q(N=5) | q(N=6) | DeltaS drift | DeltaO drift |
+|---|---:|---:|---:|---:|
+| `Uf0=1.65` | 0.0999568 | 0.0625464 | -0.0402149 | -0.124394 |
+| `Vf0=0.52` | 0.1084034 | 0.0725442 | -0.0350447 | -0.125767 |
+| 原中心 | 0.1175557 | 0.0651747 | -0.0493959 | -0.138465 |
+| `Uf0=2.00` | 0.1449348 | 0.0832512 | -0.0548342 | -0.146052 |
+| `Vf0=0.30` | 0.1467821 | 0.0832203 | -0.0539804 | -0.142118 |
+
+因此首个 N=7 只计算 `config/fast_ed/n7_original_uf0_165_auto.toml`，即
+`(Uf0,Vf0,V0)=(1.65,0.41,0.525)`。它在两个尺寸的 q 都是五点中最低，且两种 drift
+相对原中心也同时缩小；`Vf0=0.52` 保留为第二候选，等待首点 N=7 审计后再决定。
+
+首点的阻尼延拓中心为 `mu=0.12139298275993`，初始五点 scout 为
+`0.11139298275993–0.13139298275993`，`k=20`、cold start、20 个独立 sector task；后续
+refine/followup 保持最多 16 个 mu 和 3 轮的有界规则。N=3/4 各只有一个引导 valley，且
+N=5/6 local/wide 一致，所以不另加 guard。该 profile 的 `retire_before_start=[]` 且
+`auto_release=false`：不会删除旧 stage8 中心、原始 audit 中心或任何其他 cache。
+
+```bash
+bash scripts/submit_fast_ed_pipeline.sh config/fast_ed/n7_original_uf0_165_auto.toml
+```
+
+正常完成后只需下载 `output/fast_ed/archives/n7_original_uf0_165_auto_final.tar.gz`
+及对应 `.sha256`；不要在服务器运行 collect，也不必例行下载日志或 sacct。
 
 ## 已完成的本地等价性检查
 
