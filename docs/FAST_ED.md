@@ -347,6 +347,38 @@ bash scripts/submit_fast_ed_pipeline.sh config/fast_ed/n7_original_uf0_200_auto.
 正常完成后下载`output/fast_ed/archives/n7_original_uf0_200_auto_final.tar.gz`及同名
 `.sha256`。Uf0方向完成后，原baseline局部候选只剩`Vf0=0.30`的N7。
 
+`Uf0=2.00`最终包现已下载并通过SHA、raw谱及三尺寸审计。最后一个N=7点使用
+`config/fast_ed/n7_original_vf0_030_auto.toml`，Hamiltonian为
+`(Uf0,Vf0,V0)=(1.834,0.30,0.525)`。它的N=5/N=6结果已经完成并通过continuation与wide
+challenger检查，不重复计算：
+
+```text
+N5: mu=0.13335812648292, q=0.1467821225184555,
+    factor=0.048873430283174535, DeltaS=1.4232316899353752,
+    DeltaO=3.2166715395334773
+N6: mu=0.13351914240411, q=0.08322034491799561,
+    factor=0.044361750073739034, DeltaS=1.369251242661579,
+    DeltaO=3.0745533999211356
+```
+
+阻尼延拓中心为`0.133599650364705`，首轮五点为中心及`±.005,±.01`，共20个sector task。
+N=4只有一个anchor valley，N=5/6 local/wide一致，也没有已知N=6竞争谷，所以不设guard。
+资源仍为prepare 8CPU/8线程、solve每task 8CPU/8线程、最多四路并发、controller短时1CPU；
+refine/followup、16个mu/三轮硬上限、实测谷底夹住验收和未snap拟合顶点恢复逻辑均不变。
+
+启动前只通过`n7_original_uf0_200_cache_retirement.toml`释放已经独立审计的服务器cache
+`nm7_588a5f27c3a03684`。retirement同时核对实际cache ID、完整manifest与最终包SHA
+`15e45a84dba467f35b298a8568c99cacf4096123aa0981abbe673b6c59fc9948`；两个中心cache和其他
+Hamiltonian均不在清理列表中。最后一点仍`auto_release=false`，必须等下载并审计后再决定
+是否释放。
+
+```bash
+bash scripts/submit_fast_ed_pipeline.sh config/fast_ed/n7_original_vf0_030_auto.toml
+```
+
+正常完成后下载`output/fast_ed/archives/n7_original_vf0_030_auto_final.tar.gz`及同名
+`.sha256`。审计通过后，原baseline局部五个Hamiltonian的N5/6/7即全部齐全，再统一画FSS。
+
 ## 已完成的本地等价性检查
 
 - N=5、k=20：80 态键完全相同，最大能量误差 `3.24e-14`，最大 L2/C2

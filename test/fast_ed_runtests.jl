@@ -154,6 +154,11 @@ end
     )
     original_uf200_path = joinpath(root, "config", "fast_ed",
                                    "n7_original_uf0_200_auto.toml")
+    original_uf200_retirement_path = joinpath(
+        root, "config", "fast_ed", "n7_original_uf0_200_cache_retirement.toml",
+    )
+    original_vf030_path = joinpath(root, "config", "fast_ed",
+                                   "n7_original_vf0_030_auto.toml")
     pilot = FastED.load_spec(pilot_path)
     opt = FastEDPipeline.pipeline_options(pilot)
 
@@ -413,6 +418,57 @@ end
         "config/fast_ed/n7_original_vf0_052_cache_retirement.toml",
     ]
     @test !original_uf200_config["pipeline"]["auto_release"]
+
+    original_uf200_retirement = FastED.load_spec(original_uf200_retirement_path)
+    original_uf200_retirement_config = TOML.parsefile(original_uf200_retirement_path)
+    @test original_uf200_retirement.couplings == FastED.Couplings(
+        Uf=0.46, Uf0=2.0, U0=4.14, Vf=0.0, Vf0=0.41, V0=0.525,
+        t=0.5, mu=0.12225,
+    )
+    @test original_uf200_retirement_config["cache_retirement"]["expected_cache_id"] ==
+          "588a5f27c3a03684"
+    @test original_uf200_retirement_config["cache_retirement"]["verified_local_archive_sha256"] ==
+          "15e45a84dba467f35b298a8568c99cacf4096123aa0981abbe673b6c59fc9948"
+
+    original_vf030 = FastED.load_spec(original_vf030_path)
+    original_vf030_opt = FastEDPipeline.pipeline_options(original_vf030)
+    original_vf030_damped = original_vf030_opt.n6_mu +
+                            0.5*(original_vf030_opt.n6_mu-original_vf030_opt.n5_mu)
+    @test original_vf030.nm1 == 7 && original_vf030.solver.k == 20
+    @test !original_vf030.solver.warm_start
+    @test original_vf030.couplings == FastED.Couplings(
+        Uf=0.46, Uf0=1.834, U0=4.14, Vf=0.0, Vf0=0.30, V0=0.525,
+        t=0.5, mu=0.133599650364705,
+    )
+    @test original_vf030.couplings.mu ≈ original_vf030_damped atol=1e-14
+    @test original_vf030.mus ≈
+          original_vf030_damped .+ [-0.01, -0.005, 0.0, 0.005, 0.01] atol=1e-14
+    @test original_vf030.terms == original.terms && original_vf030.metric == :q
+    @test FastED.plan(original_vf030).tasks == 20
+    @test FastEDPipeline.resource_fields(original_vf030_path) == (8, 8, 8, 8, 4, 1)
+    @test original_vf030_opt.scan_parameter == "Vf0"
+    @test original_vf030_opt.scan_value == 0.30
+    @test original_vf030_opt.n5_mu == 0.13335812648292
+    @test original_vf030_opt.n6_mu == 0.13351914240411
+    @test original_vf030_opt.n5_q == 0.1467821225184555
+    @test original_vf030_opt.n6_q == 0.08322034491799561
+    @test original_vf030_opt.n5_factor == 0.048873430283174535
+    @test original_vf030_opt.n6_factor == 0.044361750073739034
+    @test original_vf030_opt.n5_delta_s == 1.4232316899353752
+    @test original_vf030_opt.n6_delta_o == 3.0745533999211356
+    @test isempty(original_vf030_opt.guard_mus)
+    @test original_vf030_opt.max_total_mus == 16
+    @test original_vf030_opt.mu_min == 0.09 && original_vf030_opt.mu_max == 0.18
+    @test original_vf030.cache_id != original.cache_id
+    @test original_vf030.cache_id != original_uf200.cache_id
+    original_vf030_config = TOML.parsefile(original_vf030_path)
+    @test original_vf030_config["fast_ed"]["run_name"] ==
+          "n7_original_vf0_030_auto_scout"
+    @test !original_vf030_config["fast_ed"]["allow_cache_release"]
+    @test original_vf030_config["pipeline"]["retire_before_start"] == [
+        "config/fast_ed/n7_original_uf0_200_cache_retirement.toml",
+    ]
+    @test !original_vf030_config["pipeline"]["auto_release"]
 
     mktempdir() do directory
         missing_guard = deepcopy(final_config)
