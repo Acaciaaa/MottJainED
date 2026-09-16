@@ -7,7 +7,7 @@
 #SBATCH --cpus-per-task=8
 #SBATCH --partition=sdicnormal
 #SBATCH --time=12:00:00
-#SBATCH --output=slurm-%x-%j.out
+#SBATCH --output=slurm-logs/mj-ent-n6-%j.out
 
 set -euo pipefail
 
