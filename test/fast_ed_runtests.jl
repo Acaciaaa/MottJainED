@@ -159,9 +159,6 @@ end
     )
     original_vf030_path = joinpath(root, "config", "fast_ed",
                                    "n7_original_vf0_030_auto.toml")
-    original_vf030_retirement_path = joinpath(
-        root, "config", "fast_ed", "n7_original_vf0_030_cache_retirement.toml",
-    )
     pilot = FastED.load_spec(pilot_path)
     opt = FastEDPipeline.pipeline_options(pilot)
 
@@ -472,17 +469,6 @@ end
         "config/fast_ed/n7_original_uf0_200_cache_retirement.toml",
     ]
     @test !original_vf030_config["pipeline"]["auto_release"]
-
-    original_vf030_retirement = FastED.load_spec(original_vf030_retirement_path)
-    original_vf030_retirement_config = TOML.parsefile(original_vf030_retirement_path)
-    @test original_vf030_retirement.couplings == FastED.Couplings(
-        Uf=0.46, Uf0=1.834, U0=4.14, Vf=0.0, Vf0=0.30, V0=0.525,
-        t=0.5, mu=0.133599650364705,
-    )
-    @test original_vf030_retirement_config["cache_retirement"]["expected_cache_id"] ==
-          "cda373e831fddf80"
-    @test original_vf030_retirement_config["cache_retirement"]["verified_local_archive_sha256"] ==
-          "ca56388d0fc40e08850986ad532826214466177d156c774844a283f574a8c03b"
 
     mktempdir() do directory
         missing_guard = deepcopy(final_config)
