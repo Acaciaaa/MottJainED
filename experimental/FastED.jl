@@ -15,6 +15,7 @@ using TOML
 const PROJECT_ROOT = normpath(joinpath(@__DIR__, ".."))
 const CACHE_SCHEMA_VERSION = 1
 const RESULT_SCHEMA_VERSION = 1
+const VECTOR_RESULT_SCHEMA_VERSION = 1
 const SECTOR_ORDER = [(z=1, r=1), (z=1, r=-1), (z=-1, r=1), (z=-1, r=-1)]
 
 section(config, name) = get(config, String(name), Dict{String,Any}())
@@ -211,6 +212,54 @@ function load_spec(path::AbstractString)
     )
 end
 
+"""Validated settings for the one-point FastED-to-generator workflow."""
+function tower_options(spec)
+    raw = section(spec.config, :fast_ed_tower)
+    isempty(raw) && throw(ArgumentError(
+        "Profile must define a [fast_ed_tower] section for vector/tower commands",
+    ))
+    length(spec.mus) == 1 || throw(ArgumentError(
+        "FastED tower profiles must contain exactly one fast_ed.mus value",
+    ))
+    mu = only(spec.mus)
+    isapprox(mu, spec.couplings.mu; atol=0.0, rtol=0.0) || throw(ArgumentError(
+        "fast_ed.mus[1] must exactly equal hamiltonian.mu for a tower snapshot",
+    ))
+    point_id = safe_label(String(getvalue(raw, :point_id, spec.run_name)))
+    point_id == String(getvalue(raw, :point_id, spec.run_name)) || throw(ArgumentError(
+        "fast_ed_tower.point_id may contain only letters, digits, '.', '_' and '-'",
+    ))
+    factor = Float64(getvalue(raw, :factor, NaN))
+    isfinite(factor) && factor > 0 || throw(ArgumentError(
+        "fast_ed_tower.factor must be a positive finite number",
+    ))
+    output_root = project_path(String(getvalue(
+        raw, :output_root, "output/fast_ed/generator",
+    )))
+    fit_config = project_path(String(getvalue(
+        raw, :fit_config,
+        "config/generator/$(point_id)/generator_fit.toml",
+    )))
+    tower_config = project_path(String(getvalue(
+        raw, :tower_config, "config/generator/$(point_id)/tower.toml",
+    )))
+    snapshot_directory = joinpath(output_root, point_id)
+    checkpoint_directory = joinpath(
+        mu_directory(spec, mu), "vector_checkpoints",
+    )
+    return (
+        point_id=point_id,
+        factor=factor,
+        mu=mu,
+        output_root=output_root,
+        fit_config=fit_config,
+        tower_config=tower_config,
+        snapshot_directory=snapshot_directory,
+        snapshot_path=joinpath(snapshot_directory, "ed_snapshot.jld2"),
+        checkpoint_directory=checkpoint_directory,
+    )
+end
+
 sector_label(z::Integer, r::Integer) = "z$(z > 0 ? "pos" : "neg")_r$(r > 0 ? "pos" : "neg")"
 sector_cache_path(spec, z::Integer, r::Integer) =
     joinpath(spec.cache_directory, "$(sector_label(z, r)).jld2")
@@ -223,6 +272,11 @@ end
 mu_directory(spec, mu::Real) = joinpath(spec.result_directory, "mu_$(mu_id(mu))")
 sector_result_path(spec, mu::Real, z::Integer, r::Integer) =
     joinpath(mu_directory(spec, mu), "$(sector_label(z, r)).csv")
+
+function vector_sector_path(spec, z::Integer, r::Integer)
+    options = tower_options(spec)
+    return joinpath(options.checkpoint_directory, "$(sector_label(z, r)).jld2")
+end
 
 function validate_cache_data(data, spec, z::Integer, r::Integer)
     Int(data["schema_version"]) == CACHE_SCHEMA_VERSION ||
@@ -505,6 +559,328 @@ function solve_sector(spec, mu_index::Integer, sector_index::Integer; force::Boo
         "mu-index must be between 1 and $(length(spec.mus))",
     ))
     return solve_sector(spec, spec.mus[mu_index], sector_index; force=force)
+end
+
+function vector_checkpoint_header(path::AbstractString)
+    names = (
+        "schema_version", "cache_id", "settings_id", "nm1", "mu", "z", "r",
+        "states", "sector_dimension", "vector_rows", "vector_columns", "k",
+        "energies", "l2values", "c2values", "ranks",
+    )
+    return JLD2.jldopen(path, "r") do file
+        haskey(file, "vectors") || throw(ArgumentError(
+            "Vector checkpoint is missing the vectors dataset: $path",
+        ))
+        Dict{String,Any}(name => file[name] for name in names)
+    end
+end
+
+function vector_checkpoint_is_current(
+    path::AbstractString, spec, z::Integer, r::Integer,
+)
+    isfile(path) || return false
+    try
+        data = vector_checkpoint_header(path)
+        states = Int(data["states"])
+        dimension = Int(data["sector_dimension"])
+        expected = dimension <= spec.solver.dense_cutoff ? min(spec.solver.k, dimension) :
+                   min(spec.solver.k, dimension - 2)
+        states == expected || return false
+        Int(data["schema_version"]) == VECTOR_RESULT_SCHEMA_VERSION || return false
+        String(data["cache_id"]) == spec.cache_id || return false
+        String(data["settings_id"]) == spec.settings_id || return false
+        Int(data["nm1"]) == spec.nm1 || return false
+        Float64(data["mu"]) == tower_options(spec).mu || return false
+        Int(data["z"]) == z && Int(data["r"]) == r || return false
+        Int(data["k"]) == spec.solver.k || return false
+        Int(data["vector_rows"]) == dimension || return false
+        Int(data["vector_columns"]) == states || return false
+        sort(Int.(data["ranks"])) == collect(1:states) || return false
+        length(data["energies"]) == states || return false
+        length(data["l2values"]) == states || return false
+        length(data["c2values"]) == states || return false
+        return all(isfinite, data["energies"]) && all(isfinite, data["l2values"]) &&
+               all(isfinite, data["c2values"])
+    catch
+        return false
+    end
+end
+
+"""
+Solve one cached standard sector and atomically retain all requested eigenvectors.
+
+Unlike `solve_sector`, this is intentionally restricted to the single μ declared by
+`[fast_ed_tower]`.  One Slurm array task calls it for one sector, so the four large
+cached matrices are never resident in the same Julia process.
+"""
+function solve_sector_vectors(spec, sector_index::Integer; force::Bool=false)
+    options = tower_options(spec)
+    _, entry = manifest_sector(spec, sector_index)
+    z, r = Int(entry["z"]), Int(entry["r"])
+    output = vector_sector_path(spec, z, r)
+    if !force && vector_checkpoint_is_current(output, spec, z, r)
+        @info "reusing completed vector checkpoint" z r output
+        return output
+    end
+
+    @info "loading sector matrices for vector checkpoint" z r mu=options.mu
+    flush(stderr)
+    loaded = load_sector_solver(spec, sector_index)
+    sector = loaded.sector
+    @info "solving sector with retained vectors" z r dimension=loaded.dimension k=spec.solver.k threads=Threads.nthreads()
+    flush(stderr)
+    started = time()
+    energies, vectors = MottJainED._eigensystem(sector, options.mu, spec.solver)
+    order = sortperm(energies)
+    energies, vectors = energies[order], vectors[:, order]
+    MottJainED._resolve_quantum_numbers!(
+        energies, vectors, sector.l2, sector.c2, spec.solver,
+    )
+    order = sortperm(energies)
+    energies, vectors = energies[order], vectors[:, order]
+    l2values = Float64[
+        real(dot(vectors[:, rank], sector.l2 * vectors[:, rank]))
+        for rank in eachindex(energies)
+    ]
+    c2values = Float64[
+        real(dot(vectors[:, rank], sector.c2 * vectors[:, rank]))
+        for rank in eachindex(energies)
+    ]
+    solve_seconds = time() - started
+    ranks = collect(eachindex(energies))
+    job_id = MottJainED.stable_id(
+        "fast-ed-vector-sector-v$(VECTOR_RESULT_SCHEMA_VERSION)", spec.cache_id,
+        spec.settings_id, options.mu, z, r,
+    )
+    MottJainED.atomic_jldsave(
+        output;
+        schema_version=VECTOR_RESULT_SCHEMA_VERSION,
+        job_id=job_id,
+        cache_id=spec.cache_id,
+        settings_id=spec.settings_id,
+        nm1=spec.nm1,
+        mu=options.mu,
+        z=z,
+        r=r,
+        states=length(energies),
+        sector_dimension=loaded.dimension,
+        vector_rows=size(vectors, 1),
+        vector_columns=size(vectors, 2),
+        k=spec.solver.k,
+        solve_seconds=solve_seconds,
+        julia_threads=Threads.nthreads(),
+        solver=solver_dict(spec.solver),
+        cache_file=loaded.cache_path,
+        config_path=spec.config_path,
+        completed_at=string(now()),
+        energies=Float64.(energies),
+        l2values=l2values,
+        c2values=c2values,
+        ranks=Int.(ranks),
+        vectors=Matrix{Float64}(vectors),
+    )
+    vector_checkpoint_is_current(output, spec, z, r) || error(
+        "Saved vector checkpoint failed validation: $output",
+    )
+    @info "saved vector checkpoint" z r states=length(energies) solve_seconds output
+    return output
+end
+
+function _fast_ed_generator_point(spec, options)
+    return GeneratorPoint(
+        point_id=options.point_id,
+        nm1=spec.nm1,
+        couplings=MottJainED.with_coupling(spec.couplings, :mu, options.mu),
+        factor=options.factor,
+        metadata=Dict{String,Any}(
+            "source" => "FastED standard-sector vector checkpoints",
+            "fast_ed_cache_id" => spec.cache_id,
+            "fast_ed_settings_id" => spec.settings_id,
+            "config_path" => spec.config_path,
+        ),
+    )
+end
+
+function _snapshot_manifest_current(path::AbstractString, spec, options)
+    isfile(path) || return false
+    try
+        data = TOML.parsefile(path)
+        return Int(data["schema_version"]) == VECTOR_RESULT_SCHEMA_VERSION &&
+               String(data["cache_id"]) == spec.cache_id &&
+               String(data["settings_id"]) == spec.settings_id &&
+               Int(data["nm1"]) == spec.nm1 &&
+               Float64(data["mu"]) == options.mu &&
+               String(data["point_id"]) == options.point_id &&
+               Int(data["sector_count"]) == length(load_cache_manifest(spec)["sectors"])
+    catch
+        return false
+    end
+end
+
+"""
+Merge four independently written vector checkpoints into one reusable generator snapshot.
+
+Only the compact FuzzifiED bases are reconstructed here.  Sparse Hamiltonian caches are
+not loaded, so assembly does not undo the per-sector memory bound of the solve stage.
+"""
+function assemble_generator_snapshot(spec; force::Bool=false)
+    options = tower_options(spec)
+    manifest = load_cache_manifest(spec)
+    snapshot_manifest = joinpath(
+        options.snapshot_directory, "fast_ed_snapshot_manifest.toml",
+    )
+    if isfile(options.snapshot_path) &&
+       _snapshot_manifest_current(snapshot_manifest, spec, options) && !force
+        snapshot = load_generator_snapshot(options.snapshot_path)
+        MottJainED.materialize_generator_snapshot(
+            options.snapshot_directory, snapshot; point=snapshot.point,
+        )
+        @info "reusing assembled FastED generator snapshot" path=options.snapshot_path
+        return (
+            snapshot=snapshot, path=options.snapshot_path,
+            directory=options.snapshot_directory, reused=true,
+        )
+    elseif isfile(options.snapshot_path) && !force
+        throw(ArgumentError(
+            "An incompatible snapshot already exists at $(options.snapshot_path); " *
+            "use --force only if it is intentional to replace it",
+        ))
+    end
+
+    checkpoint_paths = String[]
+    for entry in manifest["sectors"]
+        z, r = Int(entry["z"]), Int(entry["r"])
+        path = vector_sector_path(spec, z, r)
+        vector_checkpoint_is_current(path, spec, z, r) || throw(ArgumentError(
+            "Missing or incompatible vector checkpoint for Z=$z,R=$r: $path",
+        ))
+        push!(checkpoint_paths, path)
+    end
+
+    @info "reconstructing standard-sector bases for snapshot assembly" nm1=spec.nm1
+    flush(stderr)
+    model = build_model(nm1=spec.nm1)
+    sectors = StoredSectorSpectrum[]
+    for (entry, path) in zip(manifest["sectors"], checkpoint_paths)
+        z, r = Int(entry["z"]), Int(entry["r"])
+        data = JLD2.load(path)
+        basis = FuzzifiED.Basis(model.cfs[0], [z, r], model.qnf)
+        dimension = Int(data["sector_dimension"])
+        basis.dim == dimension || error(
+            "Reconstructed basis dimension $(basis.dim) != checkpoint dimension $dimension " *
+            "for Z=$z,R=$r",
+        )
+        vectors = data["vectors"]
+        size(vectors) == (dimension, Int(data["states"])) || error(
+            "Vector dimensions do not match checkpoint metadata for Z=$z,R=$r",
+        )
+        push!(sectors, StoredSectorSpectrum(
+            family=:standard,
+            key=SectorKey(z, r),
+            basis=basis,
+            energies=Float64.(data["energies"]),
+            l2values=Float64.(data["l2values"]),
+            c2values=Float64.(data["c2values"]),
+            ranks=Int.(data["ranks"]),
+            vectors=[copy(vectors[:, index]) for index in axes(vectors, 2)],
+        ))
+        data = nothing
+        vectors = nothing
+        GC.gc()
+    end
+
+    point = _fast_ed_generator_point(spec, options)
+    provenance = MottJainED._generator_provenance()
+    identity_signature = MottJainED.generator_snapshot_id(
+        point, spec.solver;
+        include_adjoint=false,
+        adjoint_k=spec.solver.k,
+        provenance=provenance,
+    )
+    provenance["ed_identity_signature"] = identity_signature
+    provenance["fast_ed_cache_id"] = spec.cache_id
+    provenance["fast_ed_settings_id"] = spec.settings_id
+    provenance["fast_ed_vector_schema_version"] = VECTOR_RESULT_SCHEMA_VERSION
+    snapshot = GeneratorEDSnapshot(
+        snapshot_id=point.point_id,
+        created_at=string(now()),
+        point=point,
+        settings=spec.solver,
+        include_adjoint=false,
+        adjoint_k=spec.solver.k,
+        sectors=sectors,
+        model_summary=MottJainED._model_summary(model),
+        provenance=provenance,
+    )
+    mkpath(options.snapshot_directory)
+    MottJainED.atomic_jldsave(options.snapshot_path; snapshot=snapshot)
+    MottJainED._write_ed_identity(
+        options.snapshot_directory, identity_signature, identity_signature,
+    )
+    MottJainED.materialize_generator_snapshot(
+        options.snapshot_directory, snapshot; point=point,
+    )
+    MottJainED.atomic_toml(snapshot_manifest, Dict{String,Any}(
+        "schema_version" => VECTOR_RESULT_SCHEMA_VERSION,
+        "status" => "complete",
+        "created_at" => string(now()),
+        "point_id" => point.point_id,
+        "nm1" => spec.nm1,
+        "mu" => options.mu,
+        "factor" => options.factor,
+        "k" => spec.solver.k,
+        "cache_id" => spec.cache_id,
+        "settings_id" => spec.settings_id,
+        "sector_count" => length(sectors),
+        "include_adjoint" => false,
+        "snapshot_path" => options.snapshot_path,
+        "checkpoint_paths" => checkpoint_paths,
+        "config_path" => spec.config_path,
+    ))
+    @info "saved reusable FastED generator snapshot" path=options.snapshot_path sectors=length(sectors)
+    return (
+        snapshot=snapshot, path=options.snapshot_path,
+        directory=options.snapshot_directory, reused=false,
+    )
+end
+
+"""Fit Lambda and run the editable standard-family tower table on an assembled snapshot."""
+function analyze_generator_snapshot(spec; refit::Bool=false, force_tower::Bool=false)
+    options = tower_options(spec)
+    isfile(options.fit_config) || throw(ArgumentError(
+        "Generator fit configuration not found: $(options.fit_config)",
+    ))
+    isfile(options.tower_config) || throw(ArgumentError(
+        "Tower configuration not found: $(options.tower_config)",
+    ))
+    assembled = assemble_generator_snapshot(spec)
+    point = assembled.snapshot.point
+    fit = run_generator_fit(
+        assembled.snapshot, point, options.fit_config;
+        snapshot_directory=options.snapshot_directory,
+        force=refit,
+    )
+    tower = run_tower_analysis(
+        assembled.snapshot, point, options.tower_config;
+        snapshot_directory=options.snapshot_directory,
+        generator_fit=fit,
+        force=force_tower,
+    )
+    MottJainED.atomic_toml(
+        joinpath(options.snapshot_directory, "fast_ed_tower_analysis.toml"),
+        Dict{String,Any}(
+            "status" => "complete",
+            "completed_at" => string(now()),
+            "point_id" => point.point_id,
+            "snapshot_path" => assembled.path,
+            "fit_config" => options.fit_config,
+            "tower_config" => options.tower_config,
+            "generator_fit_path" => fit.path,
+            "tower_output" => tower.output,
+            "tower_analysis_id" => tower.analysis_id,
+        ),
+    )
+    return (snapshot=assembled, fit=fit, tower=tower)
 end
 
 function rows_to_states(data::DataFrame)
@@ -846,8 +1222,10 @@ function plan(spec)
     )
 end
 
-export CACHE_SCHEMA_VERSION, RESULT_SCHEMA_VERSION, SECTOR_ORDER,
+export CACHE_SCHEMA_VERSION, RESULT_SCHEMA_VERSION, VECTOR_RESULT_SCHEMA_VERSION, SECTOR_ORDER,
        load_spec, prepare_caches, load_cache_manifest, solve_sector,
+       tower_options, vector_sector_path, vector_checkpoint_is_current,
+       solve_sector_vectors, assemble_generator_snapshot, analyze_generator_snapshot,
        collect_mu, collect_all, validate_collection, release_cache,
        compare_direct, plan, sector_result_path
 

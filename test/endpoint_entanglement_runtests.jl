@@ -6,8 +6,8 @@ include(joinpath(@__DIR__, "..", "experimental", "EndpointEntanglement.jl"))
 using .EndpointEntanglement
 
 @testset "Targeted endpoint entanglement" begin
-    @test fiqh_root_lz2(6, 3) == -27
-    @test laughlin_root_lz2(16, 3) == -27
+    @test EndpointEntanglement.fiqh_root_lz2(6, 3) == -27
+    @test EndpointEntanglement.laughlin_root_lz2(16, 3) == -27
 
     # N=2 is only a smoke test of the full ED -> RSES/OES -> plot pipeline.
     # The production N=6 calculation is deliberately never launched by tests.
@@ -40,9 +40,9 @@ using .EndpointEntanglement
             TOML.print(io, config; sorted=true)
         end
 
-        spec = load_spec(config_path)
-        @test occursin("N=2", plan(spec))
-        result = run_endpoint_entanglement(spec)
+        spec = EndpointEntanglement.load_spec(config_path)
+        @test occursin("N=2", EndpointEntanglement.plan(spec))
+        result = EndpointEntanglement.run_endpoint_entanglement(spec)
         @test size(result.ground, 1) == 2
         @test size(result.left, 1) > 0
         @test size(result.right, 1) > 0
@@ -56,7 +56,7 @@ using .EndpointEntanglement
         @test isfile(joinpath(output, "completed.toml"))
 
         # A restart must reuse both endpoint vectors and the per-sector SVD files.
-        restarted = run_endpoint_entanglement(spec)
+        restarted = EndpointEntanglement.run_endpoint_entanglement(spec)
         @test restarted.left.lambda ≈ result.left.lambda atol=0 rtol=0
         @test restarted.right.lambda ≈ result.right.lambda atol=0 rtol=0
     end

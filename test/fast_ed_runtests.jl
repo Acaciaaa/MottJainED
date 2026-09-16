@@ -37,6 +37,13 @@ using .FastEDPipeline
                 "score_terms" => ["j"],
                 "score_metric" => "q",
             ),
+            "fast_ed_tower" => Dict(
+                "point_id" => "n2_vector_test",
+                "factor" => 0.1,
+                "output_root" => joinpath(directory, "generator"),
+                "fit_config" => joinpath(directory, "generator_fit.toml"),
+                "tower_config" => joinpath(directory, "tower.toml"),
+            ),
         )
         open(config_path, "w") do io
             TOML.print(io, config; sorted=true)
@@ -81,6 +88,32 @@ using .FastEDPipeline
               [state.c2 for state in direct] atol=1e-10
         @test [(state.sector.z, state.sector.r, state.rank) for state in result.states] ==
               [(state.sector.z, state.sector.r, state.rank) for state in direct]
+
+        # The retained-vector path writes one independently reusable checkpoint per
+        # sector, then reconstructs bases without loading all sparse matrix caches.
+        for sector_index in eachindex(manifest["sectors"])
+            path = FastED.solve_sector_vectors(spec, sector_index)
+            entry = manifest["sectors"][sector_index]
+            @test FastED.vector_checkpoint_is_current(
+                path, spec, Int(entry["z"]), Int(entry["r"]),
+            )
+        end
+        assembled = FastED.assemble_generator_snapshot(spec)
+        @test !assembled.reused
+        @test isfile(assembled.path)
+        @test !assembled.snapshot.include_adjoint
+        @test length(assembled.snapshot.sectors) == length(manifest["sectors"])
+        @test all(
+            length(sector.vectors) == length(sector.energies) &&
+            all(length(vector) == sector.basis.dim for vector in sector.vectors)
+            for sector in assembled.snapshot.sectors
+        )
+        @test isfile(joinpath(
+            assembled.directory, "physical_levels_standard.csv",
+        ))
+        reused_snapshot = FastED.assemble_generator_snapshot(spec)
+        @test reused_snapshot.reused
+        @test reused_snapshot.snapshot.point.point_id == "n2_vector_test"
 
         # A resident sector must give the unchanged spectrum at a new mu, and reject
         # a truncated CSV instead of silently treating a partial result as complete.
@@ -143,6 +176,9 @@ end
     final_vf0_retirement_path = joinpath(root, "config", "fast_ed",
                                          "n7_vf0_065_cache_retirement.toml")
     original_path = joinpath(root, "config", "fast_ed", "n7_original_audit_auto.toml")
+    original_tower_path = joinpath(
+        root, "config", "fast_ed", "n7_original_tower_k40.toml",
+    )
     original_uf165_path = joinpath(root, "config", "fast_ed",
                                    "n7_original_uf0_165_auto.toml")
     original_uf165_retirement_path = joinpath(root, "config", "fast_ed",
@@ -278,6 +314,25 @@ end
         "config/fast_ed/n7_vf0_045_cache_retirement.toml",
         "config/fast_ed/n7_vf0_065_cache_retirement.toml",
     ]
+
+    original_tower = FastED.load_spec(original_tower_path)
+    original_tower_options = FastED.tower_options(original_tower)
+    @test original_tower.cache_id == original.cache_id
+    @test original_tower.nm1 == 7 && original_tower.solver.k == 40
+    @test original_tower.mus == [0.1216874050164]
+    @test FastED.plan(original_tower).tasks == 4
+    @test original_tower_options.point_id == "n7_original_muc_k40"
+    @test original_tower_options.factor == 0.03506318138984893
+    @test isfile(original_tower_options.fit_config)
+    @test isfile(original_tower_options.tower_config)
+    tower_config = TOML.parsefile(original_tower_options.tower_config)
+    @test all(state["family"] == "standard" for state in values(tower_config["states"]))
+    @test Set(relation["name"] for relation in tower_config["overlaps"]) == Set([
+        "S_to_dS", "dS_to_scalar_L0", "dS_to_scalar_L2_subspace",
+        "boxS_to_dS_boxdS", "ddS_to_dS_boxdS",
+        "J_to_dJ_two_level_subspace", "dJ_phys1_to_J_boxJ",
+        "dJ_phys2_to_J_boxJ", "curlJ_to_epsddJ",
+    ])
 
     original_uf165 = FastED.load_spec(original_uf165_path)
     original_uf165_opt = FastEDPipeline.pipeline_options(original_uf165)

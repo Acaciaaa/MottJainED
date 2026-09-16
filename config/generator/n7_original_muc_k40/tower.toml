@@ -1,0 +1,187 @@
+# Standard-family-only N=7 tower audit.  The two lowest (L2,C2)=(6,3)
+# physical levels are kept as a subspace instead of assuming in advance which
+# one is ∂J.  Editing state ranks later reruns only this inexpensive analysis;
+# it does not repeat the k=40 diagonalization.
+
+[output]
+save_generated_vectors = false
+
+[states.S]
+name = "S"
+family = "standard"
+l2 = 0
+c2 = 0
+rank = 2
+z = 1
+r = 1
+
+[states.boxS]
+name = "□S"
+family = "standard"
+l2 = 0
+c2 = 0
+rank = 3
+z = 1
+r = 1
+
+[states.dS]
+name = "∂S"
+family = "standard"
+l2 = 2
+c2 = 0
+rank = 1
+z = 1
+r = -1
+
+[states.boxdS]
+name = "□∂S"
+family = "standard"
+l2 = 2
+c2 = 0
+rank = 3
+z = 1
+r = -1
+
+[states.T]
+name = "T"
+family = "standard"
+l2 = 6
+c2 = 0
+rank = 1
+z = 1
+r = 1
+
+[states.ddS]
+name = "∂∂S(*)"
+family = "standard"
+l2 = 6
+c2 = 0
+rank = 2
+z = 1
+r = 1
+
+[states.J]
+name = "J"
+family = "standard"
+l2 = 2
+c2 = 3
+rank = 1
+z = -1
+r = -1
+
+[states.curlJ]
+name = "ϵ∂J"
+family = "standard"
+l2 = 2
+c2 = 3
+rank = 2
+z = -1
+r = -1
+
+[states.boxJ]
+name = "□J"
+family = "standard"
+l2 = 2
+c2 = 3
+rank = 3
+z = -1
+r = -1
+
+[states.dJ_phys1]
+name = "(6,3) physical level 1"
+family = "standard"
+l2 = 6
+c2 = 3
+rank = 1
+z = -1
+r = 1
+
+[states.dJ_phys2]
+name = "(6,3) physical level 2"
+family = "standard"
+l2 = 6
+c2 = 3
+rank = 2
+z = -1
+r = 1
+
+[states.epsddJ]
+name = "ϵ∂∂J"
+family = "standard"
+l2 = 6
+c2 = 3
+rank = 3
+z = -1
+r = 1
+
+[[overlaps]]
+name = "S_to_dS"
+input = "S"
+targets = ["dS"]
+target_l = 1
+mode = "regular"
+required = true
+
+[[overlaps]]
+name = "dS_to_scalar_L0"
+input = "dS"
+targets = ["S", "boxS"]
+target_l = 0
+mode = "regular"
+required = true
+
+[[overlaps]]
+name = "dS_to_scalar_L2_subspace"
+input = "dS"
+targets = ["T", "ddS"]
+target_l = 2
+mode = "regular"
+required = true
+
+[[overlaps]]
+name = "boxS_to_dS_boxdS"
+input = "boxS"
+targets = ["dS", "boxdS"]
+target_l = 1
+mode = "regular"
+required = true
+
+[[overlaps]]
+name = "ddS_to_dS_boxdS"
+input = "ddS"
+targets = ["dS", "boxdS"]
+target_l = 1
+mode = "regular"
+required = true
+
+[[overlaps]]
+name = "J_to_dJ_two_level_subspace"
+input = "J"
+targets = ["dJ_phys1", "dJ_phys2"]
+target_l = 2
+mode = "regular"
+required = true
+
+[[overlaps]]
+name = "dJ_phys1_to_J_boxJ"
+input = "dJ_phys1"
+targets = ["J", "boxJ"]
+target_l = 1
+mode = "regular"
+required = true
+
+[[overlaps]]
+name = "dJ_phys2_to_J_boxJ"
+input = "dJ_phys2"
+targets = ["J", "boxJ"]
+target_l = 1
+mode = "regular"
+required = true
+
+[[overlaps]]
+name = "curlJ_to_epsddJ"
+input = "curlJ"
+targets = ["epsddJ"]
+target_l = 2
+mode = "regular"
+required = true

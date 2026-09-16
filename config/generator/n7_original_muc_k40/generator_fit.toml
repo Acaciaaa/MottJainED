@@ -1,0 +1,22 @@
+[fit]
+source = "S"
+target = "dS"
+svd_rtol = 1.0e-10
+
+[states.S]
+name = "S"
+family = "standard"
+l2 = 0
+c2 = 0
+rank = 2
+z = 1
+r = 1
+
+[states.dS]
+name = "∂S"
+family = "standard"
+l2 = 2
+c2 = 0
+rank = 1
+z = 1
+r = -1

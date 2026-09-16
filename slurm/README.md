@@ -29,6 +29,7 @@ sbatch slurm/generator.sbatch
 | tower overlap | `tower.sbatch` |
 | orbital entanglement spectrum | `oes.sbatch` |
 | real-space entanglement spectrum | `rses.sbatch` |
+| N=7 FastED k=40 generator/tower | `fast_ed_vector_sector_array.sbatch` + `fast_ed_tower_collect.sbatch`（由 `scripts/submit_n7_original_tower_k40.sh` 提交） |
 
 ## sdicnormal 的 CPU 与内存
 

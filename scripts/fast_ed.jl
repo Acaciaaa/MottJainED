@@ -42,6 +42,9 @@ Usage:
   julia --project=. scripts/fast_ed.jl audit --config=PROFILE.toml [--require-interior]
   julia --project=. scripts/fast_ed.jl release-cache --config=PROFILE.toml --confirm-release [--require-interior]
   julia --project=. scripts/fast_ed.jl compare --config=PROFILE.toml --mu-index=N
+  julia --project=. scripts/fast_ed.jl vector-solve --config=PROFILE.toml --sector-index=N [--force]
+  julia --project=. scripts/fast_ed.jl tower-assemble --config=PROFILE.toml [--force]
+  julia --project=. scripts/fast_ed.jl tower-analyze --config=PROFILE.toml [--refit] [--force-tower]
 
 Sector index order: 1=(+,+), 2=(+,-), 3=(-,+), 4=(-,-).
 """)
@@ -97,6 +100,22 @@ elseif command == "compare"
     result = compare_direct(spec, required_int(options, "mu-index"))
     println(result)
     result.passed || error("cached and direct spectra did not pass comparison tolerances")
+elseif command == "vector-solve"
+    path = solve_sector_vectors(
+        spec, required_int(options, "sector-index");
+        force=option_bool(options, "force"),
+    )
+    println("vector checkpoint: $path")
+elseif command == "tower-assemble"
+    result = assemble_generator_snapshot(spec; force=option_bool(options, "force"))
+    println("generator snapshot: $(result.path) reused=$(result.reused)")
+elseif command == "tower-analyze"
+    result = analyze_generator_snapshot(
+        spec;
+        refit=option_bool(options, "refit"),
+        force_tower=option_bool(options, "force-tower"),
+    )
+    println("tower output: $(result.tower.output)")
 else
     usage()
     throw(ArgumentError("Unknown command '$command'"))
