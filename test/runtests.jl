@@ -733,3 +733,4 @@ end
 end
 
 include("fast_ed_runtests.jl")
+include("endpoint_entanglement_runtests.jl")
