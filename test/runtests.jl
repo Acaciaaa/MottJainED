@@ -2,13 +2,15 @@ using Test
 using MottJainED
 using DataFrames
 
-@testset "Portable FuzzifiED dependency" begin
+@testset "Isolated FuzzifiED 2 SO(3)lver dependency" begin
     root = dirname(@__DIR__)
     project = MottJainED.TOML.parsefile(joinpath(root, "Project.toml"))
     source = project["sources"]["FuzzifiED"]
-    @test source["url"] == "https://github.com/FuzzifiED/FuzzifiED.jl.git"
-    @test source["rev"] == "29a0cc9e06bcb5b30d3cf9f6db6416917f8a573f"
-    @test !haskey(source, "path")
+    @test source["path"] == "../FuzzifiED-so3lver"
+    @test !haskey(source, "url")
+    @test !haskey(source, "rev")
+    @test MottJainED.git_revision(normpath(joinpath(root, source["path"]))) ==
+          "877d140"
 
     manifest_path = joinpath(
         root, "Manifest-v$(VERSION.major).$(VERSION.minor).toml",
@@ -16,9 +18,9 @@ using DataFrames
     @test isfile(manifest_path)
     manifest = MottJainED.TOML.parsefile(manifest_path)
     fuzzified = only(manifest["deps"]["FuzzifiED"])
-    @test fuzzified["git-tree-sha1"] == "fe4f9de48a7b76014281b87a385088dea0733aac"
-    @test fuzzified["repo-rev"] == source["rev"]
-    @test !haskey(fuzzified, "path")
+    @test fuzzified["version"] == "2.0.1"
+    @test fuzzified["path"] == source["path"]
+    @test !haskey(fuzzified, "git-tree-sha1")
 end
 
 @testset "Couplings" begin
@@ -732,5 +734,6 @@ end
     )
 end
 
+include("so3lver_runtests.jl")
 include("fast_ed_runtests.jl")
 include("endpoint_entanglement_runtests.jl")
