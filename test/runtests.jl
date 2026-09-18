@@ -2,15 +2,15 @@ using Test
 using MottJainED
 using DataFrames
 
-@testset "Isolated FuzzifiED 2 SO(3)lver dependency" begin
+@testset "Pinned FuzzifiED 2 SO(3)lver dependency" begin
     root = dirname(@__DIR__)
     project = MottJainED.TOML.parsefile(joinpath(root, "Project.toml"))
     source = project["sources"]["FuzzifiED"]
-    @test source["path"] == "../FuzzifiED-so3lver"
-    @test !haskey(source, "url")
-    @test !haskey(source, "rev")
-    @test MottJainED.git_revision(normpath(joinpath(root, source["path"]))) ==
-          "877d140"
+    expected_revision = "877d1403f97a7044645af48df5caa8cd0e211a8a"
+    expected_url = "https://github.com/FuzzifiED/FuzzifiED.jl.git"
+    @test source["url"] == expected_url
+    @test source["rev"] == expected_revision
+    @test !haskey(source, "path")
 
     manifest_path = joinpath(
         root, "Manifest-v$(VERSION.major).$(VERSION.minor).toml",
@@ -19,8 +19,9 @@ using DataFrames
     manifest = MottJainED.TOML.parsefile(manifest_path)
     fuzzified = only(manifest["deps"]["FuzzifiED"])
     @test fuzzified["version"] == "2.0.1"
-    @test fuzzified["path"] == source["path"]
-    @test !haskey(fuzzified, "git-tree-sha1")
+    @test fuzzified["repo-url"] == expected_url
+    @test fuzzified["repo-rev"] == expected_revision
+    @test haskey(fuzzified, "git-tree-sha1")
 end
 
 @testset "Couplings" begin

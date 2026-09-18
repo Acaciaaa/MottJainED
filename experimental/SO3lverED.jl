@@ -6,6 +6,12 @@ using LinearAlgebra
 using MottJainED
 
 const COMPONENT_ORDER = (:Uf, :Uf0, :U0, :Vf, :Vf0, :V0, :t, :mu)
+const CFT_BLOCK_KEYS = (
+    (:singlet, 0), (:singlet, 1), (:singlet, 2),
+    (:adjoint, 0), (:adjoint, 1), (:adjoint, 2),
+)
+const CFT_SCORE_LABELS = ("dS-S", "J", "curlJ", "dJ(rank1)", "T(rank1)")
+const CFT_SCORE_TARGETS = Float64[1, 2, 3, 3, 3]
 const REPRESENTATIONS = Dict(
     :singlet => (c2=0.0, f3=0, f8=0),
     # The adjoint highest weight occurs once per SU(3) octet.  This avoids the
@@ -283,6 +289,7 @@ function solve(
     tol::Float64=1e-8,
     ncv::Int=max(2k, k + 10),
     vectors::Bool=false,
+    initvec::Union{Nothing,AbstractVector{<:Real}}=nothing,
     dense_cutoff::Int=128,
     disp_std::Bool=true,
 )
@@ -297,10 +304,20 @@ function solve(
     else
         count = min(count, dimension - 1)
         krylov_dimension = min(dimension, max(count + 1, ncv))
-        energies, states = GetEigensystem(
-            hamiltonian.operator, count;
-            tol, ncv=krylov_dimension, issymmetric=true, disp_std,
-        )
+        kwargs = (; tol, ncv=krylov_dimension, issymmetric=true, disp_std)
+        if isnothing(initvec)
+            energies, states = GetEigensystem(
+                hamiltonian.operator, count; kwargs...,
+            )
+        else
+            length(initvec) == dimension || throw(DimensionMismatch(
+                "initial vector has length $(length(initvec)); expected $dimension",
+            ))
+            energies, states = GetEigensystem(
+                hamiltonian.operator, count;
+                initvec=Float64.(initvec), kwargs...,
+            )
+        end
         # KrylovKit may return an extra converged Ritz value; keep the public
         # contract exact and deterministic.
         order = sortperm(energies)[1:count]
@@ -312,8 +329,78 @@ end
 
 sector_dimension(hamiltonian::SO3Hamiltonian) = hamiltonian.space.dim
 
+function _block_energies(blocks, representation::Symbol, ell::Int, count::Int)
+    key = (representation, ell)
+    haskey(blocks, key) || throw(ArgumentError(
+        "missing SO(3)lver spectrum block representation=$representation L=$ell",
+    ))
+    energies = sort!(Float64.(collect(blocks[key])))
+    length(energies) >= count || throw(ArgumentError(
+        "SO(3)lver spectrum block representation=$representation L=$ell " *
+        "contains $(length(energies)) levels; need at least $count",
+    ))
+    all(isfinite, energies) || throw(ArgumentError(
+        "non-finite energy in representation=$representation L=$ell",
+    ))
+    return energies
+end
+
+"""
+Evaluate the project's fixed five-relation CFT locator from exact physical blocks.
+
+The old Fock-basis workflow selected raw ranks before merging the two Cartan-zero
+copies of every SU(3) octet.  An adjoint highest-weight block contains each octet
+once, so old raw rank 3 for curl-J becomes physical rank 2 here.  The other five
+relations and the fitted scale factor are unchanged.
+"""
+function score_cft_blocks(blocks)
+    singlet_l0 = _block_energies(blocks, :singlet, 0, 2)
+    singlet_l1 = _block_energies(blocks, :singlet, 1, 1)
+    singlet_l2 = _block_energies(blocks, :singlet, 2, 1)
+    adjoint_l0 = _block_energies(blocks, :adjoint, 0, 1)
+    adjoint_l1 = _block_energies(blocks, :adjoint, 1, 2)
+    adjoint_l2 = _block_energies(blocks, :adjoint, 2, 1)
+
+    block_minima = [
+        (representation=rep, ell=ell,
+         energy=first(_block_energies(blocks, rep, ell, 1)))
+        for (rep, ell) in CFT_BLOCK_KEYS
+    ]
+    ground_block = block_minima[argmin(getproperty.(block_minima, :energy))]
+    ground = ground_block.energy
+
+    raw_gaps = Float64[
+        singlet_l1[1] - singlet_l0[2],
+        adjoint_l1[1] - ground,
+        adjoint_l1[2] - ground,
+        adjoint_l2[1] - ground,
+        singlet_l2[1] - ground,
+    ]
+    factor = dot(raw_gaps, CFT_SCORE_TARGETS) / dot(CFT_SCORE_TARGETS, CFT_SCORE_TARGETS)
+    isfinite(factor) && factor > 0 || error("fitted CFT scale factor is not positive")
+    scaled_gaps = raw_gaps ./ factor
+    residuals = scaled_gaps .- CFT_SCORE_TARGETS
+    q = sqrt(sum(abs2, residuals) / length(residuals))
+    return (
+        q=q,
+        factor=factor,
+        delta_s=(singlet_l0[2] - ground) / factor,
+        delta_o=(adjoint_l0[1] - ground) / factor,
+        raw_gaps=raw_gaps,
+        target_gaps=copy(CFT_SCORE_TARGETS),
+        scaled_gaps=scaled_gaps,
+        residuals=residuals,
+        labels=collect(CFT_SCORE_LABELS),
+        ground_energy=ground,
+        ground_representation=ground_block.representation,
+        ground_ell=ground_block.ell,
+        ground_is_singlet_l0=(ground_block.representation == :singlet && ground_block.ell == 0),
+    )
+end
+
 export SO3Model, SO3Workspace, SO3Hamiltonian,
        build_so3_model, build_workspace, build_hamiltonian,
-       retune!, solve, sector_dimension, representation_data
+       retune!, solve, sector_dimension, representation_data,
+       score_cft_blocks, CFT_BLOCK_KEYS
 
 end

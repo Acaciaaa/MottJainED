@@ -122,16 +122,31 @@ benchmark。停止前已确认：
 
 ## 服务器资源建议
 
-先只做 N=8 adjoint L=2：
+单区块压力测试可以使用：
 
 ```bash
 julia -t 8 --project=. scripts/so3lver_ed.jl benchmark \
   --nm=8 --representation=adjoint --ell=2 --k=4
 ```
 
-保守申请 `8 CPU / 32 GiB / 2 h`。第一次运行包括一次性 segment 分解；实际参数
-扫描必须在同一 Julia 进程内保留 `SO3Workspace`，依次 `retune!`，不能对每个参数
-点重新执行 benchmark 脚本。
+实际调参性能必须使用六区块 workload，而不能把上述单区块时间当成一次 CFT score：
+
+```bash
+julia -t 8 --project=. scripts/so3lver_cft_workload.jl \
+  --nm=7 --k=4 --mus=0.1216874050164 \
+  --Uf=0.46 --Uf0=1.834 --U0=4.14 --Vf=0 \
+  --Vf0=0.41 --V0=0.525 --t=0.5
+```
+
+该入口在同一个进程中各构造一次 singlet/adjoint workspace，并复用于六个
+`(representation,L)` block。`--mus` 可以给逗号分隔的多个化学势；从第二点开始每个
+block 默认使用上一点基态 warm start。输出直接包含固定五条
+`dS-S,J,curlJ,dJ(rank1),T(rank1)` 的 `q/factor/DeltaS/DeltaO`。adjoint 最高权 block
+每个 octet 只出现一次，所以旧 raw rank 3 的 curl-J 在这里是物理 rank 2。
+
+正式参数扫描必须在同一 Julia 进程内保留 workspace，依次 `retune!`；不能对每个参数
+点重新执行单区块 benchmark 脚本。与旧 FastED 不同，SO(3)lver 的 reduced operators
+允许复用全部八个 Hamiltonian 系数，不只复用 `mu`。
 
 六个当前需要的 block 维数为：
 
@@ -151,5 +166,5 @@ julia -t 8 --project=. scripts/so3lver_ed.jl benchmark \
 - orbital/real-space entanglement 仍需要 Fock-basis coefficients，不能直接复用
   SO(3)lver 的 coupled basis；
 - workspace 尚未持久化到磁盘；
-- 尚未接入现有多参数 optimizer 和 CFT score 收集器；
+- 六区块 workload 已能计算现行五项 CFT score，但尚未接入现有多参数 optimizer；
 - N=8 完整本征求解尚待服务器完成。
