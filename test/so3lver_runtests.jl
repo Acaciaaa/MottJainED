@@ -82,7 +82,10 @@ end
     adjoint_model = build_so3_model(nm1=2, representation=:adjoint)
     @test adjoint_model.weight == (1, 3)
     @test adjoint_model.c2 == 3.0
-    adjoint_workspace = build_workspace(adjoint_model; disp_std=false)
+    adjoint_workspace = build_workspace(
+        adjoint_model; heavy_space=singlet_workspace.heavy_space, disp_std=false,
+    )
+    @test adjoint_workspace.heavy_space === singlet_workspace.heavy_space
     for ell in 0:2
         hamiltonian = build_hamiltonian(
             adjoint_workspace, ell, couplings; disp_std=false,

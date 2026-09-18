@@ -107,13 +107,17 @@ workspace_seconds = Dict{String,Float64}()
 operator_seconds = Dict{String,Float64}()
 dimensions = Dict{String,Int}()
 segment_dimensions = Dict{String,Dict{String,Int}}()
+shared_heavy_space = Ref{Any}(nothing)
 
 for representation in representations
     println("building_workspace representation=$representation")
     flush(stdout)
     started = time()
     model = build_so3_model(nm1=nm, representation=representation)
-    workspace = build_workspace(model; disp_std=true)
+    workspace = build_workspace(
+        model; heavy_space=shared_heavy_space[], disp_std=true,
+    )
+    shared_heavy_space[] = workspace.heavy_space
     elapsed = time() - started
     workspaces[representation] = workspace
     workspace_seconds[String(representation)] = elapsed
@@ -208,6 +212,7 @@ result = Dict{String,Any}(
     "operator_seconds" => operator_seconds,
     "dimensions" => dimensions,
     "segment_dimensions" => segment_dimensions,
+    "shared_heavy_segment" => length(representations) > 1,
     "points" => points,
     "julia_version" => string(VERSION),
     "julia_threads" => Threads.nthreads(),

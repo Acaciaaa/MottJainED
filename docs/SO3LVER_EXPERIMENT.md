@@ -138,8 +138,9 @@ julia -t 8 --project=. scripts/so3lver_cft_workload.jl \
   --Vf0=0.41 --V0=0.525 --t=0.5
 ```
 
-该入口在同一个进程中各构造一次 singlet/adjoint workspace，并复用于六个
-`(representation,L)` block。`--mus` 可以给逗号分隔的多个化学势；从第二点开始每个
+该入口在同一个进程中各构造一次 singlet/adjoint light workspace，并让两种表示共享完全
+相同的 charge-3 heavy segment，再复用于六个 `(representation,L)` block。这一共享是精确
+重用，不截断 Hilbert space。`--mus` 可以给逗号分隔的多个化学势；从第二点开始每个
 block 默认使用上一点基态 warm start。输出直接包含固定五条
 `dS-S,J,curlJ,dJ(rank1),T(rank1)` 的 `q/factor/DeltaS/DeltaO`。adjoint 最高权 block
 每个 octet 只出现一次，所以旧 raw rank 3 的 curl-J 在这里是物理 rank 2。

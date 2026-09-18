@@ -216,6 +216,7 @@ function build_workspace(
     l2c2_ratio::Float64=0.1 / model.nm1^2,
     nst_max_light::Vector{Int}=zeros(Int, size(model.sec_light, 2)),
     nst_max_heavy::Vector{Int}=zeros(Int, size(model.sec_heavy, 2)),
+    heavy_space::Union{Nothing,SegSpace{Float64}}=nothing,
     disp_std::Bool=true,
 )
     started = time()
@@ -224,11 +225,17 @@ function build_workspace(
         model.tms_lzlp_light, model.tms_c2, [model.c2];
         l2c2_ratio, nst_max=Int64.(nst_max_light), disp_std,
     )
-    heavy_space = BuildSegSpace(
-        model.no0, model.sec_heavy, model.qnd_heavy,
-        model.tms_lzlp_heavy;
-        nst_max=Int64.(nst_max_heavy), disp_std,
-    )
+    if isnothing(heavy_space)
+        heavy_space = BuildSegSpace(
+            model.no0, model.sec_heavy, model.qnd_heavy,
+            model.tms_lzlp_heavy;
+            nst_max=Int64.(nst_max_heavy), disp_std,
+        )
+    else
+        heavy_space.sec == model.sec_heavy || throw(ArgumentError(
+            "reused heavy segment has incompatible quantum-number sectors",
+        ))
+    end
     segment_operators = BuildSegOperators(
         [light_space, heavy_space], model.all_decompositions; disp_std,
     )
