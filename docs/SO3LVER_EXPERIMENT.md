@@ -1,31 +1,33 @@
 # SO(3)lver 实验分支
 
-本文件只适用于 `so3lver-experiment` 分支。原来的 `fast-ed-experiment`、
-FuzzifiED 1.2.1、N=7 稀疏矩阵缓存和既有物理结论均未修改。
+本文件只适用于 `so3lver-experiment` 分支；SO(3)lver 功能没有合并到 `main`
+或 `fast-ed-experiment`。三个分支的依赖声明均已统一到 FuzzifiED 2.0.1；
+已有 N=7 稀疏矩阵缓存和既有物理结论未修改，也不得因依赖升级而删除。
 
 ## 固定的软件版本
 
 - MottJainED 分支：`so3lver-experiment`
 - FuzzifiED：2.0.1
 - FuzzifiED Git commit：`877d1403f97a7044645af48df5caa8cd0e211a8a`
-- 本地依赖路径：`../FuzzifiED-so3lver`
+- Project source：上述 GitHub commit
 
-本机采用两个隔离工作树：
+开发和验证时可以采用两个隔离工作树：
 
 ```text
 MottJainED-so3lver/   # 本实验分支
 FuzzifiED-so3lver/    # 上述固定 commit
 ```
 
-服务器也应保持相同的相邻目录布局。首次安装示例：
+服务器共享源码目录 `/public/home/ruiqixu/FuzzifiED.jl` 也更新到同一 commit；
+MottJainED 的各 Julia 环境则按 Project 中的 Git source 解析，不再混用 path override：
 
 ```bash
-git clone https://github.com/FuzzifiED/FuzzifiED.jl.git ../FuzzifiED-so3lver
-git -C ../FuzzifiED-so3lver checkout 877d1403f97a7044645af48df5caa8cd0e211a8a
-julia --project=. -e 'using Pkg; Pkg.Registry.update(); Pkg.develop(path="../FuzzifiED-so3lver"); Pkg.instantiate()'
+git -C /public/home/ruiqixu/FuzzifiED.jl fetch origin
+git -C /public/home/ruiqixu/FuzzifiED.jl checkout --detach 877d1403f97a7044645af48df5caa8cd0e211a8a
+julia --project=. -e 'using Pkg; Pkg.add(PackageSpec(url="https://github.com/FuzzifiED/FuzzifiED.jl.git", rev="877d1403f97a7044645af48df5caa8cd0e211a8a")); Pkg.instantiate()'
 ```
 
-不要把生产分支的 `Project.toml` 或旧缓存改指向 2.0.1。
+依赖升级会改变后续新缓存的环境身份；保留旧缓存和归档，不要跨依赖版本强行复用。
 
 ## 实现内容
 

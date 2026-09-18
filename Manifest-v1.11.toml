@@ -2,7 +2,7 @@
 
 julia_version = "1.11.6"
 manifest_format = "2.0"
-project_hash = "b7d97aa166dcfd0f27a3799047a0a0984a489f30"
+project_hash = "b58d0af90bc93bc530a06448bd23b5154bf59ecf"
 
 [[deps.ADTypes]]
 deps = ["PrecompileTools"]
@@ -647,7 +647,9 @@ version = "1.11.0"
 
 [[deps.FuzzifiED]]
 deps = ["CGcoefficient", "FuzzifiED_jll", "KrylovKit", "LinearAlgebra", "SphericalHarmonics", "WignerSymbols"]
-path = "../FuzzifiED-so3lver"
+git-tree-sha1 = "c2b1d1622d0b8d9d652a19cf19b341de4e673385"
+repo-rev = "877d1403f97a7044645af48df5caa8cd0e211a8a"
+repo-url = "https://github.com/FuzzifiED/FuzzifiED.jl.git"
 uuid = "b45b6d2d-92f2-400f-a7df-d2d897927e5f"
 version = "2.0.1"
 
