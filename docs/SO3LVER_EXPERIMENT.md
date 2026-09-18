@@ -67,12 +67,14 @@ adjoint 使用最高权而不是旧算法的 Cartan zero-weight sector，因此�
 julia --project=. --check-bounds=yes test/so3lver_runtests.jl
 ```
 
-当前结果为 21/21 tests passed。测试在 N=2 上逐 block 比较传统 Fock-basis ED
+当前结果为 46/46 tests passed。测试在 N=2 上逐 block 比较传统 Fock-basis ED
 与 SO(3)lver，覆盖：
 
 - singlet 和 adjoint；
 - L=0、1、2；
 - 一组非规则系数下的全部八个 Hamiltonian 分量；
+- 每个分量未经 `Symmetric` 包装的显式 Hermiticity；
+- 强制走 matrix-free Krylov 路径的低能谱；
 - workspace 不变、只改系数的 `retune!` 路径。
 
 所有能量在 `2e-11` 绝对误差内一致。
@@ -96,6 +98,10 @@ L=2，默认 Hamiltonian，单个新 Julia 进程：
 | 5 | 360 | 6.79 s | 1.38 s | 0.0059 s | 3.63 s |
 | 6 | 3,747 | 7.82 s | 1.58 s | 0.0267 s | 5.96 s |
 | 7 | 45,085 | 14.78 s | 1.71 s | 0.0798 s | 41.16 s |
+
+这张表的 N=3...7 求解时间采自修复费米奇宇称转化项相对符号之前，只用于资源
+和性能估算；其中 block 维数、workspace/operator/matvec 时间仍有效，旧输出中的
+能量不得用于物理分析。符号修复后的能量应在服务器重新生成。
 
 原 N=7 方法的最大离散对称 sector 约 2,932,946 维；SO(3)lver 的目标
 adjoint L=2 block 是 45,085 维。这里只比较 Hilbert-space reduction，两个实现的

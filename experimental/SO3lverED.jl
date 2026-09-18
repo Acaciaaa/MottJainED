@@ -185,8 +185,11 @@ function build_so3_model(; nm1::Int, representation::Symbol=:singlet)
         Vf=SingleSegCouple(2, 1, components.Vf, zero_shift),
         Vf0=ContactCouple([lap_light, density_heavy], no_shift),
         V0=SingleSegCouple(2, 2, components.V0, zero_shift),
-        t=-(ContactCouple([triplet, heavy_field'], light_to_heavy) +
-            ContactCouple([triplet', heavy_field], heavy_to_light)),
+        # Both factors are fermion-odd.  The graded tensor product therefore
+        # contributes a relative minus sign between a conversion channel and
+        # its Hermitian conjugate.
+        t=-ContactCouple([triplet, heavy_field'], light_to_heavy) +
+            ContactCouple([triplet', heavy_field], heavy_to_light),
         mu=SingleSegCouple(2, 1, components.mu, zero_shift),
     )
     all_decompositions, channel_component, channel_coefficient =
