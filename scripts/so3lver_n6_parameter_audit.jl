@@ -109,9 +109,23 @@ function generator_dict(result)
         "l2_expected_subspace_overlap" => result.l2_expected_subspace_overlap,
         "l0_expected_subspace_fraction" => result.l0_expected_subspace_fraction,
         "l2_expected_subspace_fraction" => result.l2_expected_subspace_fraction,
+        "l0_resolved_overlap" => result.l0_resolved_overlap,
+        "l2_resolved_overlap" => result.l2_resolved_overlap,
+        "l0_unresolved_overlap_upper_bound" => result.l0_unresolved_overlap_upper_bound,
+        "l2_unresolved_overlap_upper_bound" => result.l2_unresolved_overlap_upper_bound,
+        "boxs_competitor_overlap_upper_bound" => result.boxs_competitor_overlap_upper_bound,
+        "dds_competitor_overlap_upper_bound" => result.dds_competitor_overlap_upper_bound,
+        "boxs_leading_margin" => result.boxs_leading_margin,
+        "dds_leading_margin" => result.dds_leading_margin,
         "boxs_is_leading_non_s" => result.boxs_is_leading_non_s,
         "dds_is_leading_non_t" => result.dds_is_leading_non_t,
         "low_level_count" => result.low_level_count,
+        "minimum_l0_level_count" => result.minimum_l0_level_count,
+        "minimum_l2_level_count" => result.minimum_l2_level_count,
+        "l0_level_count" => result.l0_level_count,
+        "l2_level_count" => result.l2_level_count,
+        "l0_available_level_count" => result.l0_available_level_count,
+        "l2_available_level_count" => result.l2_available_level_count,
     )
 end
 
@@ -180,6 +194,8 @@ generator_result = if generator_enabled
             k=Int(generator_config["k"]),
             eig_tol=tol,
             low_level_count=Int(generator_config["low_level_count"]),
+            minimum_l0_level_count=Int(generator_config["minimum_l0_level_count"]),
+            minimum_l2_level_count=Int(generator_config["minimum_l2_level_count"]),
             minimum_fit_fidelity=Float64(generator_config["minimum_fit_fidelity"]),
             minimum_expected_subspace_overlap=Float64(
                 generator_config["minimum_expected_subspace_overlap"],

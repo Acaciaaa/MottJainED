@@ -50,10 +50,10 @@ The checked-in profile fixes the original audited baseline and its accepted
 N=6 chemical potential.  It writes:
 
 ```text
-output/so3lver/parameter_search/n6_reference_audit_v2/audit_summary.toml
-output/so3lver/parameter_search/n6_reference_audit_v2/scores.csv
-output/so3lver/parameter_search/n6_reference_audit_v2/state_tracking.csv
-output/so3lver/parameter_search/n6_reference_audit_v2/normalized_jacobian.csv
+output/so3lver/parameter_search/n6_reference_audit_v3/audit_summary.toml
+output/so3lver/parameter_search/n6_reference_audit_v3/scores.csv
+output/so3lver/parameter_search/n6_reference_audit_v3/state_tracking.csv
+output/so3lver/parameter_search/n6_reference_audit_v3/normalized_jacobian.csv
 ```
 
 The process still exits normally when a scientific gate fails, but prints
@@ -71,12 +71,25 @@ ground-state overlap fell to 0.533, `S` mapped from rank 2 to rank 1, and
 `boxS` mapped from rank 3 to rank 4. This is a real branch-safety failure, not
 a reason to relabel the states.
 
-The revised audit therefore keeps all six generator competitors and raises the
+The second audit kept all six requested generator competitors and raised the
 one-time conventional calculation to `k=80`. Its local `V0` difference is
-reduced to 0.02 so that the Jacobian tests the anchor branch instead of
-straddling the rearrangement. The Slurm wrapper packages the four result files
-into `n6_reference_audit_v2_job-<jobid>.tar.gz` with a SHA-256 sidecar; download
-that archive rather than pasting the files into a terminal transcript.
+0.02, so the Jacobian tested the anchor branch instead of straddling the
+rearrangement. All eight parameter probes then preserved every fixed rank; the
+smallest expected overlap was 0.899. The residual Jacobian had rank 4/4,
+singular values `(0.4086,0.03628,0.01301,0.002921)`, and condition number
+139.9. The generator still stopped before overlap analysis because the `k=80`
+spectrum contained five rather than six L=0 singlets.
+
+The current gate requests up to six resolved competitors but no longer treats
+an arbitrary exact count as physics. It requires at least four L=0 and three
+L=2 resolved levels. All omitted states are represented by the unresolved
+overlap `1-sum(resolved overlaps)`, which is used as a single worst-case
+competitor. Thus `boxS` and `ddS` pass only when their individual overlaps beat
+even the total omitted weight, in addition to the existing absolute-subspace,
+resolved-fraction, and fit-fidelity thresholds. This is stricter than simply
+dropping the sixth state. The Slurm wrapper packages the result as
+`n6_reference_audit_v3_job-<jobid>.tar.gz` with a SHA-256 sidecar; download that
+archive rather than pasting files into a terminal transcript.
 
 ## Gated N=6 optimization
 
@@ -101,8 +114,8 @@ mu grid is a branch guard; disagreement is recorded instead of silently
 accepting a local mu valley.
 
 The optimizer writes its full checkpoint trace under
-`output/so3lver/parameter_search/n6_multistart_02/`. The Slurm wrapper also
-creates `n6_multistart_02_job-<jobid>.tar.gz` and its SHA-256 sidecar. In particular,
+`output/so3lver/parameter_search/n6_multistart_03/`. The Slurm wrapper also
+creates `n6_multistart_03_job-<jobid>.tar.gz` and its SHA-256 sidecar. In particular,
 `best.toml` is only a finite-N candidate.  It must pass the unused `boxO/boxJ`,
 generator, density/phase, N=7, and ultimately N=8 holdouts before it can replace
 the baseline.

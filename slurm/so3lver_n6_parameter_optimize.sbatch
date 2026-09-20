@@ -19,7 +19,7 @@ julia --startup-file=no --project=. scripts/so3lver_n6_parameter_optimize.jl \
   --config=config/so3lver/n6_parameter_reference_audit.toml
 
 result_parent="output/so3lver/parameter_search"
-result_name="n6_multistart_02"
+result_name="n6_multistart_03"
 archive="$result_parent/${result_name}_job-${SLURM_JOB_ID}.tar.gz"
 tar -czf "$archive" -C "$result_parent" "$result_name"
 sha256sum "$archive" > "$archive.sha256"

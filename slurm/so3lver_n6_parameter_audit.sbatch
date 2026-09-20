@@ -19,7 +19,7 @@ julia --startup-file=no --project=. scripts/so3lver_n6_parameter_audit.jl \
   --config=config/so3lver/n6_parameter_reference_audit.toml
 
 result_parent="output/so3lver/parameter_search"
-result_name="n6_reference_audit_v2"
+result_name="n6_reference_audit_v3"
 archive="$result_parent/${result_name}_job-${SLURM_JOB_ID}.tar.gz"
 tar -czf "$archive" -C "$result_parent" "$result_name"
 sha256sum "$archive" > "$archive.sha256"

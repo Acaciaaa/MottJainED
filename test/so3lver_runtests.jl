@@ -155,6 +155,26 @@ end
     @test_throws DimensionMismatch parameter_search_to_physical([1.0], center, scales)
     @test_throws ArgumentError physical_to_parameter_search(center, center, -scales)
 
+    generator_gate = assess_scalar_generator_overlaps(
+        [0.02, 0.42, 0.40, 0.03, 0.02],
+        [0.43, 0.38, 0.04, 0.02],
+    )
+    @test generator_gate.passed
+    @test generator_gate.l0_unresolved_overlap_upper_bound ≈ 0.11
+    @test generator_gate.l2_unresolved_overlap_upper_bound ≈ 0.13
+    @test generator_gate.boxs_leading_margin ≈ 0.29
+    @test generator_gate.dds_leading_margin ≈ 0.25
+    truncated_failure = assess_scalar_generator_overlaps(
+        [0.02, 0.30, 0.30, 0.03], [0.43, 0.38, 0.04];
+        minimum_expected_subspace_overlap=0.0,
+        minimum_expected_subspace_fraction=0.0,
+    )
+    @test !truncated_failure.passed
+    @test !truncated_failure.boxs_is_leading_non_s
+    @test_throws ArgumentError assess_scalar_generator_overlaps(
+        [0.1, 0.4, 0.4], [0.4, 0.4, 0.1],
+    )
+
     specifications = (
         (label=:boxS, representation=:singlet, ell=0, rank=3),
         (label=:ddS, representation=:singlet, ell=2, rank=2),

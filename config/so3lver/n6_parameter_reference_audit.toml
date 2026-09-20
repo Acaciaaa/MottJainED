@@ -4,7 +4,7 @@ k = 6
 tol = 1.0e-8
 ncv = 18
 seed = 20260920
-output = "output/so3lver/parameter_search/n6_reference_audit_v2"
+output = "output/so3lver/parameter_search/n6_reference_audit_v3"
 
 [base]
 Uf = 0.46
@@ -40,13 +40,15 @@ mu = [0.08, 0.17]
 enabled = true
 k = 80
 low_level_count = 6
+minimum_l0_level_count = 4
+minimum_l2_level_count = 3
 minimum_fit_fidelity = 0.95
 minimum_expected_subspace_overlap = 0.75
 minimum_expected_subspace_fraction = 0.80
 
 [optimization]
-output = "output/so3lver/parameter_search/n6_multistart_02"
-audit_summary = "output/so3lver/parameter_search/n6_reference_audit_v2/audit_summary.toml"
+output = "output/so3lver/parameter_search/n6_multistart_03"
+audit_summary = "output/so3lver/parameter_search/n6_reference_audit_v3/audit_summary.toml"
 max_iterations_per_start = 45
 simplex_step = 1.0
 worst_residual_weight = 0.25

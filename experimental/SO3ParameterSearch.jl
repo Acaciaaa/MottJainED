@@ -153,19 +153,82 @@ function _conformal_state(label::Symbol, name::String, level, l2::Int, c2::Int, 
     )
 end
 
-function _low_scalar_states(states, l2::Int, count::Int, prefix::String)
-    catalog, _ = level_catalog(states)
+function _low_scalar_states(
+    catalog, l2::Int, maximum_count::Int, minimum_count::Int, prefix::String,
+)
     levels = get(catalog, (l2, 0), nothing)
     isnothing(levels) && error("generator audit found no (L2,C2)=($l2,0) levels")
-    length(levels) >= count || error(
-        "generator audit needs $count physical (L2,C2)=($l2,0) levels; " *
+    length(levels) >= minimum_count || error(
+        "generator audit needs at least $minimum_count physical " *
+        "(L2,C2)=($l2,0) levels; " *
         "found $(length(levels))",
     )
-    return [
+    count = min(maximum_count, length(levels))
+    selected = [
         _conformal_state(Symbol("$(prefix)$(rank)"), "$(prefix) rank $rank",
                          levels[rank], l2, 0, rank)
         for rank in 1:count
     ]
+    return (states=selected, available_count=length(levels))
+end
+
+function assess_scalar_generator_overlaps(
+    l0_values::AbstractVector{<:Real},
+    l2_values::AbstractVector{<:Real};
+    minimum_expected_subspace_overlap::Real=0.75,
+    minimum_expected_subspace_fraction::Real=0.80,
+)
+    length(l0_values) >= 4 || throw(ArgumentError(
+        "at least four L=0 scalar overlaps are required",
+    ))
+    length(l2_values) >= 3 || throw(ArgumentError(
+        "at least three L=2 scalar overlaps are required",
+    ))
+    all(>=(0), l0_values) && all(>=(0), l2_values) || throw(ArgumentError(
+        "generator overlaps must be nonnegative",
+    ))
+    l0 = Float64.(l0_values)
+    l2 = Float64.(l2_values)
+    l0_total = sum(l0)
+    l2_total = sum(l2)
+    l0_unresolved = max(0.0, 1.0 - l0_total)
+    l2_unresolved = max(0.0, 1.0 - l2_total)
+    l0_expected = l0[2] + l0[3]
+    l2_expected = l2[1] + l2[2]
+    l0_fraction = l0_total > 0 ? l0_expected / l0_total : 0.0
+    l2_fraction = l2_total > 0 ? l2_expected / l2_total : 0.0
+
+    # The unresolved total is an upper bound on every omitted state's overlap.
+    # Including it as one adversarial competitor prevents a truncated catalog
+    # from making boxS or ddS look artificially dominant.
+    boxs_competitor = maximum([l0[1]; l0[4:end]; l0_unresolved])
+    dds_competitor = maximum([l2[3:end]; l2_unresolved])
+    boxs_margin = l0[3] - boxs_competitor
+    dds_margin = l2[2] - dds_competitor
+    boxs_leading = boxs_margin >= -1.0e-12
+    dds_leading = dds_margin >= -1.0e-12
+    passed = l0_expected >= minimum_expected_subspace_overlap &&
+             l2_expected >= minimum_expected_subspace_overlap &&
+             l0_fraction >= minimum_expected_subspace_fraction &&
+             l2_fraction >= minimum_expected_subspace_fraction &&
+             boxs_leading && dds_leading
+    return (
+        passed=passed,
+        l0_expected_subspace_overlap=l0_expected,
+        l2_expected_subspace_overlap=l2_expected,
+        l0_expected_subspace_fraction=l0_fraction,
+        l2_expected_subspace_fraction=l2_fraction,
+        l0_resolved_overlap=l0_total,
+        l2_resolved_overlap=l2_total,
+        l0_unresolved_overlap_upper_bound=l0_unresolved,
+        l2_unresolved_overlap_upper_bound=l2_unresolved,
+        boxs_competitor_overlap_upper_bound=boxs_competitor,
+        dds_competitor_overlap_upper_bound=dds_competitor,
+        boxs_leading_margin=boxs_margin,
+        dds_leading_margin=dds_margin,
+        boxs_is_leading_non_s=boxs_leading,
+        dds_is_leading_non_t=dds_leading,
+    )
 end
 
 """
@@ -181,11 +244,18 @@ function audit_scalar_generator(
     k::Int=20,
     eig_tol::Float64=1.0e-8,
     low_level_count::Int=6,
+    minimum_l0_level_count::Int=4,
+    minimum_l2_level_count::Int=3,
     minimum_fit_fidelity::Real=0.95,
     minimum_expected_subspace_overlap::Real=0.75,
     minimum_expected_subspace_fraction::Real=0.80,
 )
-    low_level_count >= 4 || throw(ArgumentError("low_level_count must be at least 4"))
+    low_level_count >= minimum_l0_level_count >= 4 || throw(ArgumentError(
+        "require low_level_count >= minimum_l0_level_count >= 4",
+    ))
+    low_level_count >= minimum_l2_level_count >= 3 || throw(ArgumentError(
+        "require low_level_count >= minimum_l2_level_count >= 3",
+    ))
     model = build_model(; nm1)
     settings = SolverSettings(
         k=k, eig_tol=eig_tol, warm_start=false,
@@ -193,9 +263,17 @@ function audit_scalar_generator(
     )
     cache = prepare_spectrum(model, couplings, settings)
     states = solve_spectrum(cache, couplings.mu; keep_vectors=true)
-    l0 = _low_scalar_states(states, 0, low_level_count, "scalarL0_")
-    l1 = _low_scalar_states(states, 2, 1, "scalarL1_")
-    l2 = _low_scalar_states(states, 6, low_level_count, "scalarL2_")
+    catalog, _ = level_catalog(states)
+    l0_selection = _low_scalar_states(
+        catalog, 0, low_level_count, minimum_l0_level_count, "scalarL0_",
+    )
+    l1_selection = _low_scalar_states(catalog, 2, 1, 1, "scalarL1_")
+    l2_selection = _low_scalar_states(
+        catalog, 6, low_level_count, minimum_l2_level_count, "scalarL2_",
+    )
+    l0 = l0_selection.states
+    l1 = l1_selection.states
+    l2 = l2_selection.states
 
     # Operational labels used by the established tower convention.
     s = l0[2]
@@ -213,33 +291,39 @@ function audit_scalar_generator(
 
     l0_values = [Float64(l0_overlap.overlaps[state.label]) for state in l0]
     l2_values = [Float64(l2_overlap.overlaps[state.label]) for state in l2]
-    l0_expected = l0_values[2] + l0_values[3]
-    l2_expected = l2_values[1] + l2_values[2]
-    l0_total = sum(l0_values)
-    l2_total = sum(l2_values)
-    l0_fraction = l0_total > 0 ? l0_expected / l0_total : 0.0
-    l2_fraction = l2_total > 0 ? l2_expected / l2_total : 0.0
-    boxs_leading = l0_values[3] == maximum(l0_values[[1; 3:low_level_count]])
-    dds_leading = l2_values[2] == maximum(l2_values[2:low_level_count])
-    passed = fit.fidelity >= minimum_fit_fidelity &&
-             l0_expected >= minimum_expected_subspace_overlap &&
-             l2_expected >= minimum_expected_subspace_overlap &&
-             l0_fraction >= minimum_expected_subspace_fraction &&
-             l2_fraction >= minimum_expected_subspace_fraction &&
-             boxs_leading && dds_leading
+    assessment = assess_scalar_generator_overlaps(
+        l0_values, l2_values;
+        minimum_expected_subspace_overlap,
+        minimum_expected_subspace_fraction,
+    )
+    passed = fit.fidelity >= minimum_fit_fidelity && assessment.passed
     return (
         passed=passed,
         fit_fidelity=Float64(fit.fidelity),
         numerical_rank=fit.numerical_rank,
         l0_overlaps=l0_values,
         l2_overlaps=l2_values,
-        l0_expected_subspace_overlap=l0_expected,
-        l2_expected_subspace_overlap=l2_expected,
-        l0_expected_subspace_fraction=l0_fraction,
-        l2_expected_subspace_fraction=l2_fraction,
-        boxs_is_leading_non_s=boxs_leading,
-        dds_is_leading_non_t=dds_leading,
+        l0_expected_subspace_overlap=assessment.l0_expected_subspace_overlap,
+        l2_expected_subspace_overlap=assessment.l2_expected_subspace_overlap,
+        l0_expected_subspace_fraction=assessment.l0_expected_subspace_fraction,
+        l2_expected_subspace_fraction=assessment.l2_expected_subspace_fraction,
+        l0_resolved_overlap=assessment.l0_resolved_overlap,
+        l2_resolved_overlap=assessment.l2_resolved_overlap,
+        l0_unresolved_overlap_upper_bound=assessment.l0_unresolved_overlap_upper_bound,
+        l2_unresolved_overlap_upper_bound=assessment.l2_unresolved_overlap_upper_bound,
+        boxs_competitor_overlap_upper_bound=assessment.boxs_competitor_overlap_upper_bound,
+        dds_competitor_overlap_upper_bound=assessment.dds_competitor_overlap_upper_bound,
+        boxs_leading_margin=assessment.boxs_leading_margin,
+        dds_leading_margin=assessment.dds_leading_margin,
+        boxs_is_leading_non_s=assessment.boxs_is_leading_non_s,
+        dds_is_leading_non_t=assessment.dds_is_leading_non_t,
         low_level_count=low_level_count,
+        minimum_l0_level_count=minimum_l0_level_count,
+        minimum_l2_level_count=minimum_l2_level_count,
+        l0_level_count=length(l0),
+        l2_level_count=length(l2),
+        l0_available_level_count=l0_selection.available_count,
+        l2_available_level_count=l2_selection.available_count,
     )
 end
 
@@ -277,7 +361,8 @@ end
 
 export TRACKED_STATE_SPECS, build_cft_problem, solve_cft_blocks!,
        track_reference_states, audit_scalar_generator,
-       normalized_residual_jacobian, parameter_search_to_physical,
+       assess_scalar_generator_overlaps, normalized_residual_jacobian,
+       parameter_search_to_physical,
        physical_to_parameter_search
 
 end
