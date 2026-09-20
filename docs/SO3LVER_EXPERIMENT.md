@@ -69,7 +69,7 @@ adjoint 使用最高权而不是旧算法的 Cartan zero-weight sector，因此�
 julia --project=. --check-bounds=yes test/so3lver_runtests.jl
 ```
 
-当前结果为 46/46 tests passed。测试在 N=2 上逐 block 比较传统 Fock-basis ED
+当前专项结果为 79/79 tests passed。测试在 N=2 上逐 block 比较传统 Fock-basis ED
 与 SO(3)lver，覆盖：
 
 - singlet 和 adjoint；
@@ -167,5 +167,9 @@ block 默认使用上一点基态 warm start。输出直接包含固定五条
 - orbital/real-space entanglement 仍需要 Fock-basis coefficients，不能直接复用
   SO(3)lver 的 coupled basis；
 - workspace 尚未持久化到磁盘；
-- 六区块 workload 已能计算现行五项 CFT score，但尚未接入现有多参数 optimizer；
-- N=8 完整本征求解尚待服务器完成。
+- 六区块 workload 已能计算现行五项 CFT score；七项候选 score 只有通过
+  `docs/SO3LVER_PARAMETER_SEARCH.md` 的 generator/rank/Jacobian 门控后才允许用于调参；
+- N=8 六区块、两个 mu 的服务器实测已完成：峰值约 14.6 GiB，workspace 约 69 分钟，
+  workspace 建成后的单个完整 CFT 点约 4--5 分钟；
+- N=6 多参数优化目前先停在参照量审计入口，尚未把未经服务器认证的 `ddS/boxS` 自动
+  接入 optimizer。

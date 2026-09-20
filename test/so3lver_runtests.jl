@@ -1,8 +1,11 @@
 using Test
 using MottJainED
+using LinearAlgebra
 
 include(joinpath(@__DIR__, "..", "experimental", "SO3lverED.jl"))
 using .SO3lverED
+include(joinpath(@__DIR__, "..", "experimental", "SO3ParameterSearch.jl"))
+using .SO3ParameterSearch
 
 function conventional_catalog(couplings)
     model = build_model(nm1=2)
@@ -115,9 +118,9 @@ end
     blocks = Dict{Tuple{Symbol,Int},Vector{Float64}}(
         (:singlet, 0) => [0.0, 1.2, 3.2],
         (:singlet, 1) => [2.2],
-        (:singlet, 2) => [3.0],
-        (:adjoint, 0) => [1.6],
-        (:adjoint, 1) => [2.0, 3.0],
+        (:singlet, 2) => [3.0, 3.2],
+        (:adjoint, 0) => [1.6, 3.6],
+        (:adjoint, 1) => [2.0, 3.0, 4.0],
         (:adjoint, 2) => [3.0],
     )
     score = score_cft_blocks(blocks)
@@ -128,7 +131,57 @@ end
     @test score.ground_is_singlet_l0
     @test score.raw_gaps ≈ [1, 2, 3, 3, 3]
     @test score.labels == ["dS-S", "J", "curlJ", "dJ(rank1)", "T(rank1)"]
+    @test score.terms == collect(CFT_SCORE_TERMS)
+    seven = score_cft_blocks(blocks; terms=CFT_AUDITED_SEVEN_TERMS)
+    @test seven.q < 1e-14
+    @test seven.raw_gaps ≈ [1, 1, 2, 2, 3, 3, 3]
+    @test seven.terms == collect(CFT_AUDITED_SEVEN_TERMS)
+    holdout = score_cft_blocks(blocks; terms=[:boxo_o, :boxj_j])
+    @test holdout.q < 1e-14
+    @test holdout.raw_gaps ≈ [2, 2]
+    @test_throws ArgumentError score_cft_blocks(blocks; terms=Symbol[])
+    @test_throws ArgumentError score_cft_blocks(blocks; terms=[:j, :j])
+    @test_throws ArgumentError score_cft_blocks(blocks; terms=[:not_a_relation])
     @test_throws ArgumentError score_cft_blocks(delete!(copy(blocks), (:adjoint, 0)))
+end
+
+@testset "SO(3)lver parameter-search identity guards" begin
+    specifications = (
+        (label=:boxS, representation=:singlet, ell=0, rank=3),
+        (label=:ddS, representation=:singlet, ell=2, rank=2),
+    )
+    reference = Dict{Tuple{Symbol,Int},Matrix{Float64}}(
+        (:singlet, 0) => Matrix{Float64}(I, 4, 4),
+        (:singlet, 2) => Matrix{Float64}(I, 4, 4),
+    )
+    unchanged = Dict(key => copy(value) for (key, value) in reference)
+    stable = track_reference_states(
+        reference, unchanged; specifications, minimum_overlap=0.9,
+    )
+    @test stable.passed
+    @test all(row -> row.same_rank && row.expected_overlap ≈ 1, stable.rows)
+
+    swapped = Dict(key => copy(value) for (key, value) in reference)
+    swapped[(:singlet, 0)][:, [3, 4]] = swapped[(:singlet, 0)][:, [4, 3]]
+    unstable = track_reference_states(
+        reference, swapped; specifications, minimum_overlap=0.9,
+    )
+    @test !unstable.passed
+    @test only(filter(row -> row.label == :boxS, unstable.rows)).best_rank == 4
+
+    terms = [:a, :b, :c, :d, :e]
+    plus = Dict{Symbol,Any}()
+    minus = Dict{Symbol,Any}()
+    parameters = [:p1, :p2, :p3, :p4]
+    for (index, parameter) in enumerate(parameters)
+        direction = zeros(5)
+        direction[index] = 1
+        plus[parameter] = (terms=terms, residuals=direction)
+        minus[parameter] = (terms=terms, residuals=-direction)
+    end
+    sensitivity = normalized_residual_jacobian(plus, minus, parameters)
+    @test sensitivity.numerical_rank == 4
+    @test sensitivity.condition_number ≈ 1
 end
 
 @testset "SO(3)lver score matches conventional raw-rank score" begin

@@ -1,0 +1,61 @@
+[run]
+nm = 6
+k = 6
+tol = 1.0e-8
+ncv = 18
+seed = 20260920
+output = "output/so3lver/parameter_search/n6_reference_audit"
+
+[base]
+Uf = 0.46
+Uf0 = 1.834
+U0 = 4.14
+Vf = 0.0
+Vf0 = 0.41
+V0 = 0.525
+t = 0.5
+mu = 0.1218143040052
+
+[audit]
+free_parameters = ["Uf0", "Vf0", "V0", "mu"]
+score_terms = ["ds_s", "dds_ds", "boxs_s", "j", "curlj", "dj_rank1", "t_rank1"]
+minimum_overlap = 0.70
+require_same_rank = true
+require_full_jacobian_rank = true
+maximum_jacobian_condition_number = 1000.0
+
+[audit.steps]
+Uf0 = 0.10
+Vf0 = 0.05
+V0 = 0.08
+mu = 0.003
+
+[audit.bounds]
+Uf0 = [1.40, 2.30]
+Vf0 = [0.15, 0.80]
+V0 = [0.20, 1.40]
+mu = [0.08, 0.17]
+
+[generator]
+enabled = true
+k = 20
+low_level_count = 6
+minimum_fit_fidelity = 0.95
+minimum_expected_subspace_overlap = 0.75
+minimum_expected_subspace_fraction = 0.80
+
+[optimization]
+output = "output/so3lver/parameter_search/n6_multistart_01"
+audit_summary = "output/so3lver/parameter_search/n6_reference_audit/audit_summary.toml"
+max_iterations_per_start = 45
+simplex_step = 0.15
+worst_residual_weight = 0.25
+penalty = 1000.0
+minimum_overlap = 0.70
+wide_mu_count = 13
+wide_disagreement_tolerance = 0.002
+starts = [
+    [1.834, 0.41, 0.525, 0.1218143040052],
+    [1.65, 0.32, 0.75, 0.135],
+    [2.05, 0.55, 0.35, 0.11],
+]

@@ -10,8 +10,39 @@ const CFT_BLOCK_KEYS = (
     (:singlet, 0), (:singlet, 1), (:singlet, 2),
     (:adjoint, 0), (:adjoint, 1), (:adjoint, 2),
 )
-const CFT_SCORE_LABELS = ("dS-S", "J", "curlJ", "dJ(rank1)", "T(rank1)")
-const CFT_SCORE_TARGETS = Float64[1, 2, 3, 3, 3]
+const CFT_SCORE_TERMS = (:ds_s, :j, :curlj, :dj_rank1, :t_rank1)
+const CFT_AUDITED_SEVEN_TERMS = (
+    :ds_s, :dds_ds, :boxs_s, :j, :curlj, :dj_rank1, :t_rank1,
+)
+const CFT_RELATION_SPECS = Dict{Symbol,NamedTuple}(
+    :ds_s => (
+        label="dS-S", upper=(:singlet, 1, 1), lower=(:singlet, 0, 2), target=1.0,
+    ),
+    :dds_ds => (
+        label="ddS-dS", upper=(:singlet, 2, 2), lower=(:singlet, 1, 1), target=1.0,
+    ),
+    :boxs_s => (
+        label="boxS-S", upper=(:singlet, 0, 3), lower=(:singlet, 0, 2), target=2.0,
+    ),
+    :boxo_o => (
+        label="boxO-O", upper=(:adjoint, 0, 2), lower=(:adjoint, 0, 1), target=2.0,
+    ),
+    :j => (
+        label="J", upper=(:adjoint, 1, 1), lower=nothing, target=2.0,
+    ),
+    :curlj => (
+        label="curlJ", upper=(:adjoint, 1, 2), lower=nothing, target=3.0,
+    ),
+    :boxj_j => (
+        label="boxJ-J", upper=(:adjoint, 1, 3), lower=(:adjoint, 1, 1), target=2.0,
+    ),
+    :dj_rank1 => (
+        label="dJ(rank1)", upper=(:adjoint, 2, 1), lower=nothing, target=3.0,
+    ),
+    :t_rank1 => (
+        label="T(rank1)", upper=(:singlet, 2, 1), lower=nothing, target=3.0,
+    ),
+)
 const REPRESENTATIONS = Dict(
     :singlet => (c2=0.0, f3=0, f8=0),
     # The adjoint highest weight occurs once per SU(3) octet.  This avoids the
@@ -352,21 +383,38 @@ function _block_energies(blocks, representation::Symbol, ell::Int, count::Int)
     return energies
 end
 
-"""
-Evaluate the project's fixed five-relation CFT locator from exact physical blocks.
+function _relation_energy(blocks, state::Tuple{Symbol,Int,Int})
+    representation, ell, rank = state
+    return _block_energies(blocks, representation, ell, rank)[rank]
+end
 
-The old Fock-basis workflow selected raw ranks before merging the two Cartan-zero
-copies of every SU(3) octet.  An adjoint highest-weight block contains each octet
-once, so old raw rank 3 for curl-J becomes physical rank 2 here.  The other five
-relations and the fitted scale factor are unchanged.
+function _normalize_score_terms(terms)
+    selected = Symbol.(collect(terms))
+    isempty(selected) && throw(ArgumentError("CFT score needs at least one relation"))
+    length(unique(selected)) == length(selected) || throw(ArgumentError(
+        "CFT score terms must not contain duplicates",
+    ))
+    unknown = filter(term -> !haskey(CFT_RELATION_SPECS, term), selected)
+    isempty(unknown) || throw(ArgumentError(
+        "unknown SO(3)lver CFT score terms: $(join(String.(unknown), ", "))",
+    ))
+    return selected
+end
+
 """
-function score_cft_blocks(blocks)
+Evaluate selected CFT energy relations from exact physical blocks.
+
+The default remains the project's fixed five-relation locator.  Provisional
+higher descendants can be requested explicitly only by callers that separately
+audit their state identity.  The old Fock-basis workflow selected raw ranks
+before merging the two Cartan-zero copies of every SU(3) octet.  An adjoint
+highest-weight block contains each octet once, so old raw rank 3 for curl-J
+becomes physical rank 2 here.
+"""
+function score_cft_blocks(blocks; terms=CFT_SCORE_TERMS)
+    selected_terms = _normalize_score_terms(terms)
     singlet_l0 = _block_energies(blocks, :singlet, 0, 2)
-    singlet_l1 = _block_energies(blocks, :singlet, 1, 1)
-    singlet_l2 = _block_energies(blocks, :singlet, 2, 1)
     adjoint_l0 = _block_energies(blocks, :adjoint, 0, 1)
-    adjoint_l1 = _block_energies(blocks, :adjoint, 1, 2)
-    adjoint_l2 = _block_energies(blocks, :adjoint, 2, 1)
 
     block_minima = [
         (representation=rep, ell=ell,
@@ -376,17 +424,21 @@ function score_cft_blocks(blocks)
     ground_block = block_minima[argmin(getproperty.(block_minima, :energy))]
     ground = ground_block.energy
 
-    raw_gaps = Float64[
-        singlet_l1[1] - singlet_l0[2],
-        adjoint_l1[1] - ground,
-        adjoint_l1[2] - ground,
-        adjoint_l2[1] - ground,
-        singlet_l2[1] - ground,
-    ]
-    factor = dot(raw_gaps, CFT_SCORE_TARGETS) / dot(CFT_SCORE_TARGETS, CFT_SCORE_TARGETS)
+    raw_gaps = Float64[]
+    targets = Float64[]
+    labels = String[]
+    for term in selected_terms
+        spec = CFT_RELATION_SPECS[term]
+        upper = _relation_energy(blocks, spec.upper)
+        lower = isnothing(spec.lower) ? ground : _relation_energy(blocks, spec.lower)
+        push!(raw_gaps, upper - lower)
+        push!(targets, spec.target)
+        push!(labels, spec.label)
+    end
+    factor = dot(raw_gaps, targets) / dot(targets, targets)
     isfinite(factor) && factor > 0 || error("fitted CFT scale factor is not positive")
     scaled_gaps = raw_gaps ./ factor
-    residuals = scaled_gaps .- CFT_SCORE_TARGETS
+    residuals = scaled_gaps .- targets
     q = sqrt(sum(abs2, residuals) / length(residuals))
     return (
         q=q,
@@ -394,10 +446,11 @@ function score_cft_blocks(blocks)
         delta_s=(singlet_l0[2] - ground) / factor,
         delta_o=(adjoint_l0[1] - ground) / factor,
         raw_gaps=raw_gaps,
-        target_gaps=copy(CFT_SCORE_TARGETS),
+        target_gaps=targets,
         scaled_gaps=scaled_gaps,
         residuals=residuals,
-        labels=collect(CFT_SCORE_LABELS),
+        labels=labels,
+        terms=selected_terms,
         ground_energy=ground,
         ground_representation=ground_block.representation,
         ground_ell=ground_block.ell,
@@ -408,6 +461,7 @@ end
 export SO3Model, SO3Workspace, SO3Hamiltonian,
        build_so3_model, build_workspace, build_hamiltonian,
        retune!, solve, sector_dimension, representation_data,
-       score_cft_blocks, CFT_BLOCK_KEYS
+       score_cft_blocks, CFT_BLOCK_KEYS, CFT_SCORE_TERMS,
+       CFT_AUDITED_SEVEN_TERMS, CFT_RELATION_SPECS
 
 end
