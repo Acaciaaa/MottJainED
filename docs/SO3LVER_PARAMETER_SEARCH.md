@@ -45,6 +45,18 @@ that flag, `top_candidates.csv`, `robustness_neighbors.csv`, and the complete
 point/residual/identity traces are retained.  The result is still only an N=6
 candidate; N=7 and N=8 are later validation stages, not part of this objective.
 
+### Resume note for N=6 job 628344
+
+Job 628344 completed the anchor and all 18 first-round Latin-hypercube
+profiles, saving 407 point evaluations, before the diverse-start selector
+stopped because the driver had not imported `LinearAlgebra.norm`.  This was a
+driver error after the spectral work, not an eigensolver or resource failure.
+The import-only fix deliberately retains the original driver token in the
+resume signature, so those saved profiles are reused and a restart continues
+at the multi-start stage.  A two-start N=3 end-to-end regression exercises the
+selector, Nelder--Mead search, best-point recheck, six robustness neighbors,
+and final result writing.
+
 ## Matched N=7 finite-size search
 
 While the N=6 production search is running, the same nested stable-six method
@@ -56,9 +68,10 @@ physical anchor change is the already audited N=7 original-baseline value
 `mu=0.1216874050164`; its output is isolated under
 `n7_nested_six_term_01/`.
 
-The N=6 driver remains unchanged so an in-flight or resumed N=6 trace keeps
-the same source signature.  A size-checked N=7 wrapper invokes that exact core
-implementation.  Submit it independently with:
+The size-checked N=7 wrapper invokes the same core implementation.  The
+resume-compatibility token described above also lets an N=7 trace started
+before the import-only fix continue without discarding valid evaluations.
+Submit it independently with:
 
 ```bash
 mkdir -p slurm-logs

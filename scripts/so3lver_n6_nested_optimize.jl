@@ -9,6 +9,7 @@ using CSV
 using DataFrames
 using Dates
 using FuzzifiED
+using LinearAlgebra
 using MottJainED
 using Optim
 using Random
@@ -35,6 +36,14 @@ end
 sha256_file(path) = open(path) do io
     bytes2hex(sha256(io))
 end
+
+# The first production N=6 run wrote 407 reusable point evaluations before a
+# missing LinearAlgebra import stopped the diverse-start selection.  Keep the
+# original driver hash in the resume signature because importing `norm` only
+# restores the already intended algorithm.  Any future scientific change to
+# this driver must deliberately update this compatibility token.
+const NESTED_SEARCH_SIGNATURE_DRIVER_SHA256 =
+    "59f0f080ed6c085b696a4fde033b760eb37a5b820879e40b9c2f063fa34824bb"
 
 function dict_couplings(values)
     defaults = Couplings()
@@ -172,7 +181,7 @@ signature = MottJainED.stable_id(
     hard_lower, hard_upper, initial_half_widths,
     mu_lower, mu_upper, mu_grid_count, mu_refine_basins,
     sha256_file(config_path), sha256_file(so3_path), sha256_file(search_path),
-    sha256_file(@__FILE__),
+    NESTED_SEARCH_SIGNATURE_DRIVER_SHA256,
 )
 
 point_path = joinpath(output, "point_evaluations.csv")
@@ -402,7 +411,7 @@ function evaluate_target(couplings, warm; source, outer_id)
             source, outer_id, couplings, assessment, penalty, false, reason,
             identity_mode, minimum_path_overlap, time() - started,
         )
-        @error "N=6 point evaluation failed" outer_id source couplings exception=(err, catch_backtrace())
+        @error "N=$nm point evaluation failed" outer_id source couplings exception=(err, catch_backtrace())
         return (
             objective=penalty, valid=false, reason=reason,
             assessment=nothing, couplings=couplings,
@@ -749,6 +758,7 @@ best_dict = Dict{String,Any}(
     "so3lver_source_sha256" => sha256_file(so3_path),
     "search_source_sha256" => sha256_file(search_path),
     "driver_source_sha256" => sha256_file(@__FILE__),
+    "driver_signature_sha256" => NESTED_SEARCH_SIGNATURE_DRIVER_SHA256,
     "project_git_revision" => MottJainED.git_revision(PROJECT_ROOT),
     "fuzzified_version" => string(Base.pkgversion(FuzzifiED)),
 )
