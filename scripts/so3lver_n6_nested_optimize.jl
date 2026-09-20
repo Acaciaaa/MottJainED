@@ -171,7 +171,7 @@ robustness_tolerance = Float64(robustness_config["objective_tolerance"])
 output = abspath(get(
     options, "output", joinpath(PROJECT_ROOT, String(run_config["output"])),
 ))
-mkpath(output)
+validate_only = lowercase(get(options, "validate-only", "false")) == "true"
 
 so3_path = joinpath(PROJECT_ROOT, "experimental", "SO3lverED.jl")
 search_path = joinpath(PROJECT_ROOT, "experimental", "SO3ParameterSearch.jl")
@@ -208,17 +208,18 @@ if isfile(outer_path)
         "existing outer trace belongs to another search; choose a new output directory",
     )
 end
-cp(config_path, joinpath(output, "search_config.toml"); force=true)
 
 println("N=$nm nested six-term SO(3)lver parameter search")
 println("outer_parameters=$(join(outer_parameters, ',')); mu is fully reprofiled")
 println("output=$output")
 println("Julia $(VERSION), threads=$(Threads.nthreads()), FuzzifiED $(Base.pkgversion(FuzzifiED))")
 flush(stdout)
-if lowercase(get(options, "validate-only", "false")) == "true"
+if validate_only
     println("VALIDATION_OK: configuration, dependencies, and source signatures loaded")
     exit(0)
 end
+mkpath(output)
+cp(config_path, joinpath(output, "search_config.toml"); force=true)
 
 problem = build_cft_problem(nm, base; disp_std=true)
 anchor = solve_cft_blocks!(
