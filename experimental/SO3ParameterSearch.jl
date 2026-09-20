@@ -2,6 +2,7 @@ module SO3ParameterSearch
 
 using LinearAlgebra
 using MottJainED
+using Random
 using ..SO3lverED
 
 const TRACKED_STATE_SPECS = (
@@ -16,6 +17,78 @@ const TRACKED_STATE_SPECS = (
     (label=:curlJ, representation=:adjoint, ell=1, rank=2),
     (label=:dJ, representation=:adjoint, ell=2, rank=1),
 )
+
+const STABLE_SIX_TRACKED_STATE_SPECS = (
+    (label=:G, representation=:singlet, ell=0, rank=1),
+    (label=:S, representation=:singlet, ell=0, rank=2),
+    (label=:dS, representation=:singlet, ell=1, rank=1),
+    (label=:T, representation=:singlet, ell=2, rank=1),
+    (label=:ddS, representation=:singlet, ell=2, rank=2),
+    (label=:O, representation=:adjoint, ell=0, rank=1),
+    (label=:J, representation=:adjoint, ell=1, rank=1),
+    (label=:curlJ, representation=:adjoint, ell=1, rank=2),
+    (label=:dJ, representation=:adjoint, ell=2, rank=1),
+)
+
+function latin_hypercube_points(
+    count::Int,
+    lower::AbstractVector{<:Real},
+    upper::AbstractVector{<:Real},
+    rng,
+)
+    count > 0 || throw(ArgumentError("Latin-hypercube count must be positive"))
+    length(lower) == length(upper) || throw(DimensionMismatch(
+        "lower and upper bounds must have equal length",
+    ))
+    all(Float64.(lower) .< Float64.(upper)) || throw(ArgumentError(
+        "every Latin-hypercube bound must have positive width",
+    ))
+    dimensions = length(lower)
+    unit = zeros(Float64, count, dimensions)
+    for dimension in 1:dimensions
+        permutation = randperm(rng, count)
+        for row in 1:count
+            unit[row, dimension] = (permutation[row] - rand(rng)) / count
+        end
+    end
+    low = reshape(Float64.(lower), 1, :)
+    width = reshape(Float64.(upper) .- Float64.(lower), 1, :)
+    return low .+ unit .* width
+end
+
+function mu_refinement_brackets(
+    mu_values::AbstractVector{<:Real},
+    objectives::AbstractVector{<:Real},
+    valid::AbstractVector{Bool};
+    maximum_count::Int=typemax(Int),
+)
+    length(mu_values) == length(objectives) == length(valid) ||
+        throw(DimensionMismatch("mu values, objectives, and validity must align"))
+    length(mu_values) >= 3 || throw(ArgumentError(
+        "at least three mu grid points are required",
+    ))
+    maximum_count >= 0 || throw(ArgumentError("maximum_count must be nonnegative"))
+    mu = Float64.(mu_values)
+    issorted(mu) && all(diff(mu) .> 0) || throw(ArgumentError(
+        "mu grid must be strictly increasing",
+    ))
+    candidates = NamedTuple[]
+    for index in 2:length(mu)-1
+        valid[index-1] && valid[index] && valid[index+1] || continue
+        value = Float64(objectives[index])
+        isfinite(value) || continue
+        value <= objectives[index-1] && value <= objectives[index+1] || continue
+        push!(candidates, (
+            index=index,
+            lower=mu[index-1],
+            center=mu[index],
+            upper=mu[index+1],
+            objective=value,
+        ))
+    end
+    sort!(candidates; by=row -> (row.objective, row.center))
+    return candidates[1:min(maximum_count, length(candidates))]
+end
 
 function parameter_search_to_physical(values, center, scales)
     length(values) == length(center) == length(scales) ||
@@ -359,7 +432,9 @@ function normalized_residual_jacobian(plus_scores, minus_scores, parameters)
     )
 end
 
-export TRACKED_STATE_SPECS, build_cft_problem, solve_cft_blocks!,
+export TRACKED_STATE_SPECS, STABLE_SIX_TRACKED_STATE_SPECS,
+       latin_hypercube_points, mu_refinement_brackets,
+       build_cft_problem, solve_cft_blocks!,
        track_reference_states, audit_scalar_generator,
        assess_scalar_generator_overlaps, normalized_residual_jacobian,
        parameter_search_to_physical,

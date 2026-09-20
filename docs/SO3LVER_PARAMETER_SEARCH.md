@@ -1,5 +1,52 @@
 # SO(3)lver N=6 parameter search
 
+## Current recommended search: nested stable-six objective
+
+The active N=6 search no longer uses `boxS` or a microscopic-generator gate.
+The audit showed that `ddS` remains rank- and overlap-stable throughout the
+local probes, whereas `boxS` can exchange rank across the useful `V0` range.
+The current training score therefore contains exactly
+
+```text
+dS-S, ddS-dS, J, curlJ, dJ(rank1), T(rank1).
+```
+
+`Uf0`, `Vf0`, and `V0` are optimized jointly.  `mu` is not optimized once and
+then held fixed: every outer point receives a complete coarse scan over the
+configured `mu` interval, followed by independent Brent refinement of every
+valid local valley (up to the configured limit).  This is the key guard
+against mistaking a sequentially tuned point for a joint optimum.
+
+The outer search first uses deterministic Latin-hypercube coverage, then runs
+several diverse three-dimensional Nelder--Mead starts.  If the best point lies
+against the current trust-region boundary, the region is recentered and
+expanded for one more round.  Every scored state must keep its fixed physical
+rank and pass the direct overlap gate.  Line continuation from the anchor is
+allowed only as an identity fallback; it never relabels a rank.  A final full
+`mu` reprofile and six one-sided outer-parameter neighbors are included in the
+same job, so there is no separate generator or audit job to launch.
+
+Run on the server with:
+
+```bash
+mkdir -p slurm-logs
+sbatch slurm/so3lver_n6_nested_optimize.sbatch
+```
+
+The wrapper requests eight CPUs on `sdicnormal` and deliberately specifies
+neither memory nor a time limit.  It packages the complete result directory as
+`n6_nested_six_term_01_job-<jobid>.tar.gz`, with a SHA-256 sidecar.  Download
+that archive for analysis instead of pasting long CSV or log output.
+
+The main decision file is `best.toml`.  `accepted = true` requires an interior
+`mu`, preservation of the original five-term locator to the configured ratio,
+and no improvement at any of the six local robustness probes.  Regardless of
+that flag, `top_candidates.csv`, `robustness_neighbors.csv`, and the complete
+point/residual/identity traces are retained.  The result is still only an N=6
+candidate; N=7 and N=8 are later validation stages, not part of this objective.
+
+## Historical seven-term audit and optimizer
+
 The multi-parameter search is deliberately split into a reference audit and a
 later optimization.  Do not enable the provisional seven-relation score merely
 because the required eigenvalues are present.
@@ -91,7 +138,7 @@ dropping the sixth state. The Slurm wrapper packages the result as
 `n6_reference_audit_v3_job-<jobid>.tar.gz` with a SHA-256 sidecar; download that
 archive rather than pasting files into a terminal transcript.
 
-## Gated N=6 optimization
+## Historical gated N=6 optimization
 
 Only after the audit passes, run:
 

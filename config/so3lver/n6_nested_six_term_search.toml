@@ -1,0 +1,82 @@
+[run]
+nm = 6
+k = 6
+tol = 1.0e-8
+ncv = 18
+seed = 20260920
+output = "output/so3lver/parameter_search/n6_nested_six_term_01"
+
+[base]
+Uf = 0.46
+Uf0 = 1.834
+U0 = 4.14
+Vf = 0.0
+Vf0 = 0.41
+V0 = 0.525
+t = 0.5
+mu = 0.1218143040052
+
+[score]
+terms = ["ds_s", "dds_ds", "j", "curlj", "dj_rank1", "t_rank1"]
+worst_residual_weight = 0.25
+minimum_overlap = 0.70
+penalty = 1000.0
+maximum_q5_ratio = 1.05
+
+# Every outer (Uf0,Vf0,V0) point is judged only after this entire mu interval
+# has been scanned.  Every valid local valley, up to refine_basins, is then
+# refined independently; mu is never inherited as a fixed outer parameter.
+[mu]
+lower = 0.08
+upper = 0.17
+grid_count = 13
+# A 13-point grid can contain at most six disjoint interior local minima, so
+# this setting refines every valid valley rather than selecting only one.
+refine_basins = 6
+refine_iterations = 12
+absolute_tolerance = 1.0e-5
+boundary_tolerance = 0.001
+
+[outer]
+parameters = ["Uf0", "Vf0", "V0"]
+initial_samples = 18
+local_starts = 3
+local_iterations = 16
+simplex_step = 0.25
+maximum_rounds = 2
+expansion_factor = 1.5
+boundary_fraction = 0.12
+minimum_start_distance = 0.20
+top_candidate_count = 12
+
+[outer.initial_half_widths]
+Uf0 = 0.20
+Vf0 = 0.10
+V0 = 0.04
+
+[outer.hard_bounds]
+Uf0 = [1.40, 2.30]
+Vf0 = [0.15, 0.80]
+V0 = [0.20, 1.40]
+
+# Continuation is only a fallback when a direct anchor overlap is insufficient.
+# It never changes the fixed physical ranks used by the six score relations.
+[continuation]
+maximum_steps = 12
+
+[continuation.steps]
+Uf0 = 0.05
+Vf0 = 0.025
+V0 = 0.01
+mu = 0.003
+
+# The final candidate is profiled again at both sides of every outer parameter.
+# Acceptance requires all six neighbors to be valid and none to improve the
+# nested objective by more than objective_tolerance.
+[robustness]
+objective_tolerance = 0.001
+
+[robustness.steps]
+Uf0 = 0.01
+Vf0 = 0.005
+V0 = 0.002

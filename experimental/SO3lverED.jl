@@ -11,6 +11,9 @@ const CFT_BLOCK_KEYS = (
     (:adjoint, 0), (:adjoint, 1), (:adjoint, 2),
 )
 const CFT_SCORE_TERMS = (:ds_s, :j, :curlj, :dj_rank1, :t_rank1)
+const CFT_STABLE_SIX_TERMS = (
+    :ds_s, :dds_ds, :j, :curlj, :dj_rank1, :t_rank1,
+)
 const CFT_AUDITED_SEVEN_TERMS = (
     :ds_s, :dds_ds, :boxs_s, :j, :curlj, :dj_rank1, :t_rank1,
 )
@@ -462,6 +465,6 @@ export SO3Model, SO3Workspace, SO3Hamiltonian,
        build_so3_model, build_workspace, build_hamiltonian,
        retune!, solve, sector_dimension, representation_data,
        score_cft_blocks, CFT_BLOCK_KEYS, CFT_SCORE_TERMS,
-       CFT_AUDITED_SEVEN_TERMS, CFT_RELATION_SPECS
+       CFT_STABLE_SIX_TERMS, CFT_AUDITED_SEVEN_TERMS, CFT_RELATION_SPECS
 
 end

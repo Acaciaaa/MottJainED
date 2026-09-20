@@ -1,6 +1,7 @@
 using Test
 using MottJainED
 using LinearAlgebra
+using Random
 
 include(joinpath(@__DIR__, "..", "experimental", "SO3lverED.jl"))
 using .SO3lverED
@@ -136,6 +137,10 @@ end
     @test seven.q < 1e-14
     @test seven.raw_gaps ≈ [1, 1, 2, 2, 3, 3, 3]
     @test seven.terms == collect(CFT_AUDITED_SEVEN_TERMS)
+    stable_six = score_cft_blocks(blocks; terms=CFT_STABLE_SIX_TERMS)
+    @test stable_six.q < 1e-14
+    @test stable_six.raw_gaps ≈ [1, 1, 2, 3, 3, 3]
+    @test stable_six.terms == collect(CFT_STABLE_SIX_TERMS)
     holdout = score_cft_blocks(blocks; terms=[:boxo_o, :boxj_j])
     @test holdout.q < 1e-14
     @test holdout.raw_gaps ≈ [2, 2]
@@ -146,6 +151,39 @@ end
 end
 
 @testset "SO(3)lver parameter-search identity guards" begin
+    stable_labels = getproperty.(STABLE_SIX_TRACKED_STATE_SPECS, :label)
+    @test :ddS in stable_labels
+    @test :boxS ∉ stable_labels
+
+    lhs = latin_hypercube_points(
+        8, [1.0, -2.0], [3.0, 2.0], MersenneTwister(17),
+    )
+    @test size(lhs) == (8, 2)
+    @test all(1.0 .<= lhs[:, 1] .<= 3.0)
+    @test all(-2.0 .<= lhs[:, 2] .<= 2.0)
+    for column in 1:2
+        lower, upper = column == 1 ? (1.0, 3.0) : (-2.0, 2.0)
+        bins = floor.(Int, 8 .* (lhs[:, column] .- lower) ./ (upper - lower))
+        @test sort(bins) == collect(0:7)
+    end
+    @test lhs == latin_hypercube_points(
+        8, [1.0, -2.0], [3.0, 2.0], MersenneTwister(17),
+    )
+
+    brackets = mu_refinement_brackets(
+        collect(0.0:0.1:0.6),
+        [4.0, 1.0, 3.0, 2.0, 0.5, 2.0, 4.0],
+        trues(7); maximum_count=2,
+    )
+    @test getproperty.(brackets, :index) == [5, 2]
+    @test brackets[1].lower ≈ 0.3
+    @test brackets[1].upper ≈ 0.5
+    invalid_middle = mu_refinement_brackets(
+        collect(0.0:0.1:0.4), [3.0, 1.0, 2.0, 0.5, 3.0],
+        Bool[true, true, false, true, true],
+    )
+    @test isempty(invalid_middle)
+
     center = [1.834, 0.41, 0.525, 0.1218143040052]
     scales = [0.05, 0.025, 0.01, 0.0015]
     search_point = [-1.0, 0.5, 2.0, -0.25]
