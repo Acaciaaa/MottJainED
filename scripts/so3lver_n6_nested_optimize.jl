@@ -400,9 +400,13 @@ function evaluate_target(couplings, warm; source, outer_id)
         println("point=$(evaluation[]) source=$source outer=$outer_id " *
                 "objective=$objective valid=$valid mu=$(couplings.mu)")
         flush(stdout)
+        # The search only consumes the score and tracking summaries after the
+        # point has been recorded.  Do not retain the much larger eigensystem
+        # inside every mu/profile checkpoint during the local search.
+        compact_assessment = merge(assessment, (solved=nothing,))
         return (
             objective=objective, valid=valid, reason=reason,
-            assessment=assessment, couplings=couplings,
+            assessment=compact_assessment, couplings=couplings,
             identity_mode=identity_mode,
             minimum_overlap=minimum_path_overlap,
         )

@@ -33,8 +33,12 @@ mkdir -p slurm-logs
 sbatch slurm/so3lver_n6_nested_optimize.sbatch
 ```
 
-The wrapper requests eight CPUs on `sdicnormal` and deliberately specifies
-neither memory nor a time limit.  It packages the complete result directory as
+The wrapper requests eight CPUs/threads and 4 GiB total memory on `sdicnormal`.
+The memory request is based on job 628344's measured 1.83 GiB peak, with more
+than twofold headroom; completed eigensystems are discarded after their score
+and tracking data are recorded so local-search profiles do not accumulate
+large vectors.  No wall-time limit is specified.  The job packages the
+complete result directory as
 `n6_nested_six_term_01_job-<jobid>.tar.gz`, with a SHA-256 sidecar.  Download
 that archive for analysis instead of pasting long CSV or log output.
 
@@ -78,8 +82,11 @@ mkdir -p slurm-logs
 sbatch slurm/so3lver_n7_nested_optimize.sbatch
 ```
 
-The wrapper again requests eight CPUs on `sdicnormal`, with neither an
-explicit memory request nor a wall-time limit.  It packages the result as
+The wrapper again requests eight CPUs/threads on `sdicnormal`, but requests
+6 GiB total memory for N=7.  This is derived from the approximately 2.6 GiB
+measured N=7 six-block peak plus more than twofold headroom, rather than from
+the partition's 61 GiB eight-CPU default.  It specifies no wall-time limit and
+packages the result as
 `n7_nested_six_term_01_job-<jobid>.tar.gz` plus a SHA-256 sidecar.  Once both
 sizes finish, compare the full `best.toml`, `top_candidates.csv`, identity
 overlaps, residual vectors, and six robustness neighbors.  Agreement means

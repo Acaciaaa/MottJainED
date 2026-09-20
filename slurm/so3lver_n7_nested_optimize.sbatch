@@ -3,6 +3,7 @@
 #SBATCH --nodes=1
 #SBATCH --ntasks-per-node=1
 #SBATCH --cpus-per-task=8
+#SBATCH --mem=6G
 #SBATCH --partition=sdicnormal
 #SBATCH --output=slurm-logs/so3-n7-nested-%j.out
 
