@@ -17,6 +17,20 @@ const TRACKED_STATE_SPECS = (
     (label=:dJ, representation=:adjoint, ell=2, rank=1),
 )
 
+function parameter_search_to_physical(values, center, scales)
+    length(values) == length(center) == length(scales) ||
+        throw(DimensionMismatch("values, center, and scales must have equal length"))
+    all(>(0), scales) || throw(ArgumentError("all parameter scales must be positive"))
+    return Float64.(center) .+ Float64.(values) .* Float64.(scales)
+end
+
+function physical_to_parameter_search(values, center, scales)
+    length(values) == length(center) == length(scales) ||
+        throw(DimensionMismatch("values, center, and scales must have equal length"))
+    all(>(0), scales) || throw(ArgumentError("all parameter scales must be positive"))
+    return (Float64.(values) .- Float64.(center)) ./ Float64.(scales)
+end
+
 function build_cft_problem(nm1::Int, couplings::Couplings; disp_std::Bool=true)
     workspaces = Dict{Symbol,SO3Workspace}()
     hamiltonians = Dict{Tuple{Symbol,Int},SO3Hamiltonian}()
@@ -263,6 +277,7 @@ end
 
 export TRACKED_STATE_SPECS, build_cft_problem, solve_cft_blocks!,
        track_reference_states, audit_scalar_generator,
-       normalized_residual_jacobian
+       normalized_residual_jacobian, parameter_search_to_physical,
+       physical_to_parameter_search
 
 end

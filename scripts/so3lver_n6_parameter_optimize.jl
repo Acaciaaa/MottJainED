@@ -54,15 +54,7 @@ function couplings_with_parameters(base, parameters, values)
     return result
 end
 
-function normalized_to_physical(values, lower, upper)
-    return lower .+ ((Float64.(values) .+ 1) ./ 2) .* (upper .- lower)
-end
-
-function physical_to_normalized(values, lower, upper)
-    return 2 .* (Float64.(values) .- lower) ./ (upper .- lower) .- 1
-end
-
-function verify_audit!(summary, config_path, so3_path, search_path)
+function verify_audit!(summary, config_path, so3_path, search_path, audit_driver_path)
     Bool(summary["passed"]) || error(
         "reference audit did not certify ddS/boxS; seven-term optimization is forbidden",
     )
@@ -70,6 +62,7 @@ function verify_audit!(summary, config_path, so3_path, search_path)
         ("config_source_sha256", config_path),
         ("so3lver_source_sha256", so3_path),
         ("search_source_sha256", search_path),
+        ("driver_source_sha256", audit_driver_path),
     )
     for (field, path) in checks
         expected = String(summary[field])
@@ -104,13 +97,17 @@ bounds = Dict(
 lower = Float64[bounds[parameter][1] for parameter in parameters]
 upper = Float64[bounds[parameter][2] for parameter in parameters]
 all(lower .< upper) || error("all optimization bounds must have positive width")
+center = Float64[getfield(base, parameter) for parameter in parameters]
 
 so3_path = joinpath(PROJECT_ROOT, "experimental", "SO3lverED.jl")
 search_path = joinpath(PROJECT_ROOT, "experimental", "SO3ParameterSearch.jl")
+audit_driver_path = joinpath(PROJECT_ROOT, "scripts", "so3lver_n6_parameter_audit.jl")
 audit_path = abspath(joinpath(PROJECT_ROOT, String(optimization_config["audit_summary"])))
 isfile(audit_path) || error("audit summary not found: $audit_path")
 audit_summary = TOML.parsefile(audit_path)
-verify_audit!(audit_summary, config_path, so3_path, search_path)
+verify_audit!(
+    audit_summary, config_path, so3_path, search_path, audit_driver_path,
+)
 
 nm = Int(run_config["nm"])
 k = Int(run_config["k"])
@@ -118,6 +115,13 @@ tol = Float64(run_config["tol"])
 ncv = Int(run_config["ncv"])
 max_iterations = Int(optimization_config["max_iterations_per_start"])
 simplex_step = Float64(optimization_config["simplex_step"])
+scale_config = optimization_config["parameter_scales"]
+parameter_scales = Float64[
+    scale_config[String(parameter)] for parameter in parameters
+]
+all(parameter_scales .> 0) || error(
+    "all optimization parameter scales must be positive",
+)
 worst_weight = Float64(optimization_config["worst_residual_weight"])
 penalty = Float64(optimization_config["penalty"])
 minimum_overlap = Float64(optimization_config["minimum_overlap"])
@@ -139,7 +143,7 @@ Random.seed!(Int(run_config["seed"]))
 signature = MottJainED.stable_id(
     "so3lver-n6-seven-term-search-v1", nm, k, tol, ncv,
     String.(parameters), String.(terms), lower, upper, starts,
-    max_iterations, simplex_step, worst_weight, minimum_overlap,
+    max_iterations, simplex_step, parameter_scales, worst_weight, minimum_overlap,
     sha256_file(config_path), sha256_file(so3_path), sha256_file(search_path),
 )
 trace_path = joinpath(output, "evaluations.csv")
@@ -280,19 +284,27 @@ end
 
 run_summaries = Dict{String,Any}[]
 for (start_index, physical_start) in enumerate(starts)
-    normalized_start = physical_to_normalized(physical_start, lower, upper)
-    objective(normalized) = if all((-1 .<= normalized) .& (normalized .<= 1))
-        physical = normalized_to_physical(normalized, lower, upper)
-        evaluate_physical(physical; source="start_$start_index").objective
-    else
-        penalty + sum(abs2, max.(abs.(normalized) .- 1, 0))
+    search_start = physical_to_parameter_search(
+        physical_start, center, parameter_scales,
+    )
+    objective(search_values) = begin
+        physical = parameter_search_to_physical(
+            search_values, center, parameter_scales,
+        )
+        if all((lower .<= physical) .& (physical .<= upper))
+            evaluate_physical(physical; source="start_$start_index").objective
+        else
+            below = max.((lower .- physical) ./ parameter_scales, 0)
+            above = max.((physical .- upper) ./ parameter_scales, 0)
+            penalty + sum(abs2, below .+ above)
+        end
     end
     method = NelderMead(
         initial_simplex=Optim.AffineSimplexer(a=simplex_step, b=0.0),
     )
     started = time()
     result = optimize(
-        objective, normalized_start, method,
+        objective, search_start, method,
         Optim.Options(
             iterations=max_iterations,
             f_reltol=1.0e-5,
@@ -301,7 +313,9 @@ for (start_index, physical_start) in enumerate(starts)
             store_trace=false,
         ),
     )
-    minimizer = normalized_to_physical(Optim.minimizer(result), lower, upper)
+    minimizer = parameter_search_to_physical(
+        Optim.minimizer(result), center, parameter_scales,
+    )
     push!(run_summaries, Dict{String,Any}(
         "start_index" => start_index,
         "start" => physical_start,

@@ -146,6 +146,15 @@ end
 end
 
 @testset "SO(3)lver parameter-search identity guards" begin
+    center = [1.834, 0.41, 0.525, 0.1218143040052]
+    scales = [0.05, 0.025, 0.01, 0.0015]
+    search_point = [-1.0, 0.5, 2.0, -0.25]
+    physical_point = parameter_search_to_physical(search_point, center, scales)
+    @test physical_point ≈ [1.784, 0.4225, 0.545, 0.1214393040052]
+    @test physical_to_parameter_search(physical_point, center, scales) ≈ search_point
+    @test_throws DimensionMismatch parameter_search_to_physical([1.0], center, scales)
+    @test_throws ArgumentError physical_to_parameter_search(center, center, -scales)
+
     specifications = (
         (label=:boxS, representation=:singlet, ell=0, rank=3),
         (label=:ddS, representation=:singlet, ell=2, rank=2),

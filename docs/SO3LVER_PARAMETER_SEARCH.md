@@ -50,10 +50,10 @@ The checked-in profile fixes the original audited baseline and its accepted
 N=6 chemical potential.  It writes:
 
 ```text
-output/so3lver/parameter_search/n6_reference_audit/audit_summary.toml
-output/so3lver/parameter_search/n6_reference_audit/scores.csv
-output/so3lver/parameter_search/n6_reference_audit/state_tracking.csv
-output/so3lver/parameter_search/n6_reference_audit/normalized_jacobian.csv
+output/so3lver/parameter_search/n6_reference_audit_v2/audit_summary.toml
+output/so3lver/parameter_search/n6_reference_audit_v2/scores.csv
+output/so3lver/parameter_search/n6_reference_audit_v2/state_tracking.csv
+output/so3lver/parameter_search/n6_reference_audit_v2/normalized_jacobian.csv
 ```
 
 The process still exits normally when a scientific gate fails, but prints
@@ -61,6 +61,22 @@ The process still exits normally when a scientific gate fails, but prints
 scientific result distinct from a scheduler or numerical crash.  Inspect
 `audit_summary.toml` instead of weakening the thresholds or changing ranks to
 force a pass.
+
+The first server audit on 2026-09-20 completed normally but was not certified.
+It exactly reproduced the five-relation anchor score and found a full-rank
+seven-residual Jacobian, but the conventional `k=20` spectrum contained only
+four of the six requested singlet L=0 levels. More importantly, the original
+`V0` probe at `0.525-0.08=0.445` crossed a low-scalar rearrangement: the anchor
+ground-state overlap fell to 0.533, `S` mapped from rank 2 to rank 1, and
+`boxS` mapped from rank 3 to rank 4. This is a real branch-safety failure, not
+a reason to relabel the states.
+
+The revised audit therefore keeps all six generator competitors and raises the
+one-time conventional calculation to `k=80`. Its local `V0` difference is
+reduced to 0.02 so that the Jacobian tests the anchor branch instead of
+straddling the rearrangement. The Slurm wrapper packages the four result files
+into `n6_reference_audit_v2_job-<jobid>.tar.gz` with a SHA-256 sidecar; download
+that archive rather than pasting the files into a terminal transcript.
 
 ## Gated N=6 optimization
 
@@ -71,8 +87,12 @@ julia -t 8 --project=. scripts/so3lver_n6_parameter_optimize.jl \
   --config=config/so3lver/n6_parameter_reference_audit.toml
 ```
 
-The first profile uses three normalized Nelder--Mead starts for
+The first profile uses three local, identity-gated Nelder--Mead starts for
 `Uf0,Vf0,V0,mu`, while `Uf=.46`, `U0=4.14`, `Vf=0`, and `t=.5` remain fixed.
+The simplex coordinates are scaled separately in physical units for each
+parameter. In particular, the broad allowed `V0` interval no longer turns a
+single generic normalized step into a `V0=0.09` jump across the scalar
+rearrangement.
 Every evaluated point is rejected if a scored eigenvector no longer maps to the
 same anchor rank with the configured minimum overlap, or if the global ground
 branch is no longer singlet L=0.  The scalar objective is the seven-relation RMS
@@ -81,7 +101,8 @@ mu grid is a branch guard; disagreement is recorded instead of silently
 accepting a local mu valley.
 
 The optimizer writes its full checkpoint trace under
-`output/so3lver/parameter_search/n6_multistart_01/`.  In particular,
+`output/so3lver/parameter_search/n6_multistart_02/`. The Slurm wrapper also
+creates `n6_multistart_02_job-<jobid>.tar.gz` and its SHA-256 sidecar. In particular,
 `best.toml` is only a finite-N candidate.  It must pass the unused `boxO/boxJ`,
 generator, density/phase, N=7, and ultimately N=8 holdouts before it can replace
 the baseline.
