@@ -80,7 +80,11 @@ continuation_config = config["continuation"]
 robustness_config = config["robustness"]
 
 nm = Int(run_config["nm"])
-nm == 6 || error("this driver is intentionally restricted to the N=6 search")
+allow_test_size = lowercase(get(options, "allow-test-size", "false")) == "true"
+(nm == 6 || allow_test_size) || error(
+    "this driver is intentionally restricted to N=6; " *
+    "--allow-test-size=true is only for a small end-to-end smoke test",
+)
 k = Int(run_config["k"])
 k >= 3 || error("the stable six-term score needs at least three levels per block")
 tol = Float64(run_config["tol"])
@@ -168,6 +172,7 @@ signature = MottJainED.stable_id(
     hard_lower, hard_upper, initial_half_widths,
     mu_lower, mu_upper, mu_grid_count, mu_refine_basins,
     sha256_file(config_path), sha256_file(so3_path), sha256_file(search_path),
+    sha256_file(@__FILE__),
 )
 
 point_path = joinpath(output, "point_evaluations.csv")
@@ -545,10 +550,11 @@ function diverse_starts(candidates, count, lower, upper)
     return selected
 end
 
-rng = MersenneTwister(seed)
-region_center = copy(anchor_values)
-region_half_widths = copy(initial_half_widths)
-local_run_rows = Dict{String,Any}[]
+function run_nested_search()
+    rng = MersenneTwister(seed)
+    region_center = copy(anchor_values)
+    region_half_widths = copy(initial_half_widths)
+    local_run_rows = Dict{String,Any}[]
 
 for round_index in 1:maximum_rounds
     region_lower = max.(hard_lower, region_center .- region_half_widths)
@@ -756,3 +762,7 @@ println("best_parameters=Uf0=$(best.values[1]),Vf0=$(best.values[2])," *
         "V0=$(best.values[3]),mu=$(best.best_mu)")
 println("search_result=$(joinpath(output, "best.toml"))")
 accepted || println("SEARCH_NOT_ACCEPTED: inspect best.toml and robustness_neighbors.csv")
+    return best_dict
+end
+
+run_nested_search()
