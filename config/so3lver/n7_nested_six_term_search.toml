@@ -1,0 +1,75 @@
+[run]
+nm = 7
+k = 6
+tol = 1.0e-8
+ncv = 18
+seed = 20260920
+output = "output/so3lver/parameter_search/n7_nested_six_term_01"
+
+[base]
+Uf = 0.46
+Uf0 = 1.834
+U0 = 4.14
+Vf = 0.0
+Vf0 = 0.41
+V0 = 0.525
+t = 0.5
+# Audited N=7 original-baseline locator, rather than the N=6 anchor mu.
+mu = 0.1216874050164
+
+[score]
+terms = ["ds_s", "dds_ds", "j", "curlj", "dj_rank1", "t_rank1"]
+worst_residual_weight = 0.25
+minimum_overlap = 0.70
+penalty = 1000.0
+maximum_q5_ratio = 1.05
+
+# Match the N=6 nested search exactly so the two finite-size optima and their
+# basins can be compared without a search-protocol confound.
+[mu]
+lower = 0.08
+upper = 0.17
+grid_count = 13
+refine_basins = 6
+refine_iterations = 12
+absolute_tolerance = 1.0e-5
+boundary_tolerance = 0.001
+
+[outer]
+parameters = ["Uf0", "Vf0", "V0"]
+initial_samples = 18
+local_starts = 3
+local_iterations = 16
+simplex_step = 0.25
+maximum_rounds = 2
+expansion_factor = 1.5
+boundary_fraction = 0.12
+minimum_start_distance = 0.20
+top_candidate_count = 12
+
+[outer.initial_half_widths]
+Uf0 = 0.20
+Vf0 = 0.10
+V0 = 0.04
+
+[outer.hard_bounds]
+Uf0 = [1.40, 2.30]
+Vf0 = [0.15, 0.80]
+V0 = [0.20, 1.40]
+
+[continuation]
+maximum_steps = 12
+
+[continuation.steps]
+Uf0 = 0.05
+Vf0 = 0.025
+V0 = 0.01
+mu = 0.003
+
+[robustness]
+objective_tolerance = 0.001
+
+[robustness.steps]
+Uf0 = 0.01
+Vf0 = 0.005
+V0 = 0.002

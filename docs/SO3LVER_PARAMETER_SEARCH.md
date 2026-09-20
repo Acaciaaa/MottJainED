@@ -1,4 +1,4 @@
-# SO(3)lver N=6 parameter search
+# SO(3)lver nested parameter search
 
 ## Current recommended search: nested stable-six objective
 
@@ -44,6 +44,34 @@ and no improvement at any of the six local robustness probes.  Regardless of
 that flag, `top_candidates.csv`, `robustness_neighbors.csv`, and the complete
 point/residual/identity traces are retained.  The result is still only an N=6
 candidate; N=7 and N=8 are later validation stages, not part of this objective.
+
+## Matched N=7 finite-size search
+
+While the N=6 production search is running, the same nested stable-six method
+can be repeated independently at N=7 to test whether the optimized parameter
+basins agree across sizes.  The N=7 profile deliberately keeps the N=6 search
+box, deterministic Latin-hypercube seed, local-search budget, complete `mu`
+profiling, score, identity gates, and robustness probes unchanged.  Its only
+physical anchor change is the already audited N=7 original-baseline value
+`mu=0.1216874050164`; its output is isolated under
+`n7_nested_six_term_01/`.
+
+The N=6 driver remains unchanged so an in-flight or resumed N=6 trace keeps
+the same source signature.  A size-checked N=7 wrapper invokes that exact core
+implementation.  Submit it independently with:
+
+```bash
+mkdir -p slurm-logs
+sbatch slurm/so3lver_n7_nested_optimize.sbatch
+```
+
+The wrapper again requests eight CPUs on `sdicnormal`, with neither an
+explicit memory request nor a wall-time limit.  It packages the result as
+`n7_nested_six_term_01_job-<jobid>.tar.gz` plus a SHA-256 sidecar.  Once both
+sizes finish, compare the full `best.toml`, `top_candidates.csv`, identity
+overlaps, residual vectors, and six robustness neighbors.  Agreement means
+compatible basins within their finite-size resolution; it does not by itself
+establish a thermodynamic CFT point.
 
 ## Historical seven-term audit and optimizer
 

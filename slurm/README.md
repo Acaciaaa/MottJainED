@@ -25,6 +25,7 @@ sbatch slurm/generator.sbatch
 | FSS 数据和 DeltaS/DeltaO 图 | `fss.sbatch`（数组任务分别扫描 Uf0/Vf0） |
 | Hamiltonian 参数优化 | `optimize.sbatch` |
 | SO(3)lver N=6 六项嵌套参数优化 | `so3lver_n6_nested_optimize.sbatch` |
+| SO(3)lver N=7 同协议六项嵌套比较 | `so3lver_n7_nested_optimize.sbatch` |
 | scaling dimension 图 | `scaling.sbatch` |
 | generator ED 与 Lambda 拟合 | `generator.sbatch` |
 | tower overlap | `tower.sbatch` |
