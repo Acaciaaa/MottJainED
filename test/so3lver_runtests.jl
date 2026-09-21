@@ -193,6 +193,29 @@ end
     @test_throws DimensionMismatch parameter_search_to_physical([1.0], center, scales)
     @test_throws ArgumentError physical_to_parameter_search(center, center, -scales)
 
+    linked_grid = linked_uf_grid_values(
+        [0.44, 0.46], [1.64, 1.66], [0.345], [0.623, 0.64];
+        u0_over_uf=9.0,
+    )
+    @test length(linked_grid) == 8
+    @test all(point -> point.U0 ≈ 9 * point.Uf, linked_grid)
+    @test first(linked_grid).Uf == 0.44
+    @test first(linked_grid).U0 ≈ 3.96
+    @test first(linked_grid).Uf0 == 1.64
+    @test first(linked_grid).Vf0 == 0.345
+    @test first(linked_grid).V0 == 0.623
+    @test last(linked_grid).Uf == 0.46
+    @test last(linked_grid).U0 ≈ 4.14
+    @test last(linked_grid).Uf0 == 1.66
+    @test last(linked_grid).Vf0 == 0.345
+    @test last(linked_grid).V0 == 0.64
+    @test_throws ArgumentError linked_uf_grid_values(
+        [0.46, 0.46], [1.64], [0.345], [0.623],
+    )
+    @test_throws ArgumentError linked_uf_grid_values(
+        [0.46], [1.64], [0.345], [0.623]; u0_over_uf=0,
+    )
+
     generator_gate = assess_scalar_generator_overlaps(
         [0.02, 0.42, 0.40, 0.03, 0.02],
         [0.43, 0.38, 0.04, 0.02],

@@ -1,0 +1,73 @@
+[run]
+nm = 3
+k = 3
+tol = 1.0e-8
+ncv = 9
+output = "output/so3lver/test/n3_linked_uf_v0_extension"
+
+[base]
+Uf = 0.46
+Uf0 = 1.834
+U0 = 4.14
+Vf = 0.0
+Vf0 = 0.41
+V0 = 0.525
+t = 0.5
+mu = 0.1218143040052
+
+[score]
+terms = ["ds_s", "dds_ds", "j", "curlj", "dj_rank1", "t_rank1"]
+worst_residual_weight = 0.25
+minimum_overlap = 0.0
+penalty = 1000.0
+maximum_q5_ratio = 10.0
+
+[mu]
+lower = 0.10
+upper = 0.14
+grid_count = 5
+refine_basins = 2
+refine_iterations = 4
+absolute_tolerance = 1.0e-4
+boundary_tolerance = 0.001
+
+[scan]
+u0_over_uf = 9.0
+uf_values = [0.45, 0.46]
+uf0_values = [1.66]
+vf0_values = [0.345]
+v0_values = [0.62]
+expected_profile_count = 3
+top_candidate_count = 3
+
+[scan.allowed_bounds]
+Uf = [0.40, 0.52]
+Uf0 = [1.40, 2.30]
+Vf0 = [0.15, 0.80]
+V0 = [0.20, 1.40]
+
+[[scan.extra_profiles]]
+name = "smoke_extra"
+Uf = 0.46
+Uf0 = 1.67
+Vf0 = 0.35
+V0 = 0.63
+
+[continuation]
+maximum_steps = 20
+
+[continuation.steps]
+Uf = 0.01
+Uf0 = 0.05
+Vf0 = 0.025
+V0 = 0.01
+mu = 0.003
+
+[robustness]
+objective_tolerance = 1.0
+
+[robustness.steps]
+Uf = 0.005
+Uf0 = 0.005
+Vf0 = 0.0025
+V0 = 0.0025

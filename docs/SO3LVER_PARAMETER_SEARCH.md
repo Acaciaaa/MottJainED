@@ -231,3 +231,70 @@ creates `n6_multistart_03_job-<jobid>.tar.gz` and its SHA-256 sidecar. In partic
 `best.toml` is only a finite-N candidate.  It must pass the unused `boxO/boxJ`,
 generator, density/phase, N=7, and ultimately N=8 holdouts before it can replace
 the baseline.
+
+## Deterministic N=6 linked-Uf extension
+
+The recovered nested run from job 633223 identified a useful N=6 basin, but its
+selected point was not the best point among the separately evaluated audit
+neighbors and remained close to the second-round `V0` ceiling.  Therefore
+`scripts/so3lver_n6_linked_uf_v0_extension.jl` performs a deterministic local
+extension before another stochastic multistart search is considered.  It does
+not claim to search the entire allowed box.
+
+The scan treats `Uf` as a physical direction while enforcing `U0 = 9 Uf`; `U0`
+is not an independent fit parameter.  Its outer Cartesian grid is
+
+```text
+Uf  = 0.44, 0.46, 0.48       (U0 = 3.96, 4.14, 4.32)
+Uf0 = 1.64, 1.66, 1.68
+Vf0 = 0.3449772487682664, 0.3499772487682664, 0.3549772487682664
+V0  = 0.6228991002533251, 0.64, 0.67, 0.70
+```
+
+These axes give 108 grid profiles.  Four exact points from job 633223 are
+included as regression checks, for 112 unique search profiles in total.  Every
+profile independently evaluates a 13-point `mu` grid over `[0.08,0.17]` and
+Brent-refines every detected valid valley.  Thus neither the old best `mu` nor
+a single common `mu` is reused.  The score is the audited stable six-relation
+score; the original five-relation score remains an independent guard.
+
+After the grid, the driver fully rechecks the best profile and evaluates both
+directions of all four physical outer parameters.  `best.toml` separates
+`diagnostic_complete` from `scan_conclusive`.  A completed calculation is still
+reported as inconclusive when the optimum lies on any scanned grid boundary,
+when `mu` lies at its interval boundary, when the five-relation guard fails, or
+when a robustness neighbor improves the objective beyond tolerance.  In that
+case the output indicates which range should be extended; it must not be
+silently promoted to a final Hamiltonian point.
+
+The run checkpoints every point and completed profile using atomic/append-only
+CSV output.  Re-submitting the same job resumes completed profiles after
+verifying a signature over the configuration and relevant source files.  Once
+the matching `best.toml` exists, a repeat invocation exits with
+`ALREADY_COMPLETE` and lets the Slurm wrapper recreate the archive without
+rerunning ED.  The primary outputs are
+
+```text
+output/so3lver/parameter_search/n6_linked_uf_v0_extension_01/
+  scan_manifest.csv
+  point_evaluations.csv
+  point_residuals.csv
+  state_tracking.csv
+  profile_evaluations.csv
+  robustness_neighbors.csv
+  top_candidates.csv
+  best.toml
+```
+
+Submit with
+
+```bash
+sbatch slurm/so3lver_n6_linked_uf_v0_extension.sbatch
+```
+
+The wrapper requests 8 CPUs and 4 GiB total memory.  This is based on job
+633223, which averaged about 5.2 utilized cores and peaked at 2.31 GiB, rather
+than on a fixed project default.  The new driver also discards solved
+eigenvectors after each recorded evaluation.  Scaling the 112 profiles from
+the 209-profile, 21.1-hour predecessor gives an approximate 11--13 hour
+wall-clock expectation, subject to queue-node and eigensolver variation.

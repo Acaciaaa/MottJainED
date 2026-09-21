@@ -104,6 +104,52 @@ function physical_to_parameter_search(values, center, scales)
     return (Float64.(values) .- Float64.(center)) ./ Float64.(scales)
 end
 
+"""
+Build a deterministic Cartesian grid for a linked `Uf`/`U0` scan.
+
+`U0` is not an independent axis: every returned point obeys
+`U0 = u0_over_uf * Uf`.  The remaining axes are `Uf0`, `Vf0`, and `V0`.
+Duplicate values inside an axis are rejected so the advertised profile count
+cannot silently disagree with the actual number of Hamiltonians.
+"""
+function linked_uf_grid_values(
+    uf_values,
+    uf0_values,
+    vf0_values,
+    v0_values;
+    u0_over_uf::Real=9.0,
+)
+    ratio = Float64(u0_over_uf)
+    isfinite(ratio) && ratio > 0 || throw(ArgumentError(
+        "u0_over_uf must be finite and positive",
+    ))
+    axes = map((uf_values, uf0_values, vf0_values, v0_values)) do values
+        axis = Float64.(collect(values))
+        isempty(axis) && throw(ArgumentError("linked grid axes must not be empty"))
+        all(isfinite, axis) || throw(ArgumentError(
+            "linked grid axes must contain only finite values",
+        ))
+        length(unique(axis)) == length(axis) || throw(ArgumentError(
+            "linked grid axes must not contain duplicate values",
+        ))
+        axis
+    end
+    uf_axis, uf0_axis, vf0_axis, v0_axis = axes
+    return [
+        (
+            Uf=uf,
+            U0=ratio * uf,
+            Uf0=uf0,
+            Vf0=vf0,
+            V0=v0,
+        )
+        for uf in uf_axis
+        for uf0 in uf0_axis
+        for vf0 in vf0_axis
+        for v0 in v0_axis
+    ]
+end
+
 function build_cft_problem(nm1::Int, couplings::Couplings; disp_std::Bool=true)
     workspaces = Dict{Symbol,SO3Workspace}()
     hamiltonians = Dict{Tuple{Symbol,Int},SO3Hamiltonian}()
@@ -438,6 +484,7 @@ export TRACKED_STATE_SPECS, STABLE_SIX_TRACKED_STATE_SPECS,
        track_reference_states, audit_scalar_generator,
        assess_scalar_generator_overlaps, normalized_residual_jacobian,
        parameter_search_to_physical,
-       physical_to_parameter_search
+       physical_to_parameter_search,
+       linked_uf_grid_values
 
 end

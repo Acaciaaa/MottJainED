@@ -1,0 +1,104 @@
+[run]
+nm = 6
+k = 6
+tol = 1.0e-8
+ncv = 18
+output = "output/so3lver/parameter_search/n6_linked_uf_v0_extension_01"
+
+# This is the original audited reference used only for fixed-rank state
+# tracking and the q5 guard.  Every scan profile below receives its own full
+# mu search; this raw anchor mu is never reused as the profile optimum.
+[base]
+Uf = 0.46
+Uf0 = 1.834
+U0 = 4.14
+Vf = 0.0
+Vf0 = 0.41
+V0 = 0.525
+t = 0.5
+mu = 0.1218143040052
+
+[score]
+terms = ["ds_s", "dds_ds", "j", "curlj", "dj_rank1", "t_rank1"]
+worst_residual_weight = 0.25
+minimum_overlap = 0.70
+penalty = 1000.0
+maximum_q5_ratio = 1.05
+
+[mu]
+lower = 0.08
+upper = 0.17
+grid_count = 13
+refine_basins = 6
+refine_iterations = 12
+absolute_tolerance = 1.0e-5
+boundary_tolerance = 0.001
+
+# Deterministic local four-dimensional grid around the N=6 basin.  Uf and U0
+# are one linked physical direction, not two independent fit parameters.
+# The 3 x 3 x 3 x 4 product contains 108 profiles.  Four exact points from job
+# 633223 are also included below as transparent cross-checks; one overlaps the
+# rounded grid only approximately, so the expected total is 112 unique profiles.
+[scan]
+u0_over_uf = 9.0
+uf_values = [0.44, 0.46, 0.48]
+uf0_values = [1.64, 1.66, 1.68]
+vf0_values = [0.3449772487682664, 0.3499772487682664, 0.3549772487682664]
+v0_values = [0.6228991002533251, 0.64, 0.67, 0.70]
+expected_profile_count = 112
+top_candidate_count = 20
+
+[scan.allowed_bounds]
+Uf = [0.40, 0.52]
+Uf0 = [1.40, 2.30]
+Vf0 = [0.15, 0.80]
+V0 = [0.20, 1.40]
+
+[[scan.extra_profiles]]
+name = "job633223_selected"
+Uf = 0.46
+Uf0 = 1.6705860385658133
+Vf0 = 0.3449772487682664
+V0 = 0.6208991002533251
+
+[[scan.extra_profiles]]
+name = "job633223_uf0_minus"
+Uf = 0.46
+Uf0 = 1.6605860385658133
+Vf0 = 0.3449772487682664
+V0 = 0.6208991002533251
+
+[[scan.extra_profiles]]
+name = "job633223_vf0_plus"
+Uf = 0.46
+Uf0 = 1.6705860385658133
+Vf0 = 0.3499772487682664
+V0 = 0.6208991002533251
+
+[[scan.extra_profiles]]
+name = "job633223_v0_plus"
+Uf = 0.46
+Uf0 = 1.6705860385658133
+Vf0 = 0.3449772487682664
+V0 = 0.6228991002533251
+
+[continuation]
+maximum_steps = 20
+
+[continuation.steps]
+Uf = 0.01
+Uf0 = 0.05
+Vf0 = 0.025
+V0 = 0.01
+mu = 0.003
+
+# These are tolerance probes around the best grid point.  Uf automatically
+# moves U0 by nine times the listed step.
+[robustness]
+objective_tolerance = 0.001
+
+[robustness.steps]
+Uf = 0.01
+Uf0 = 0.01
+Vf0 = 0.005
+V0 = 0.005
