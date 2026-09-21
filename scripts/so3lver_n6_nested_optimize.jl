@@ -439,7 +439,17 @@ if isfile(outer_path)
     all(String(value) == signature for value in previous.signature) || error(
         "existing outer trace belongs to another search; choose a new output directory",
     )
+    excluded_final_audits = Ref(0)
     for row in eachrow(previous)
+        source = String(row.source)
+        if source == "best_recheck" || startswith(source, "robustness_")
+            # These rows are downstream audits of the already selected search
+            # minimum.  If a job dies while writing the final files, feeding a
+            # slightly better robustness neighbor back into the optimizer on
+            # resume would silently change the search trajectory.
+            excluded_final_audits[] += 1
+            continue
+        end
         values = Float64[row.Uf0, row.Vf0, row.V0]
         profiles[String(row.outer_id)] = (
             id=String(row.outer_id), values=values, valid=Bool(row.valid),
@@ -450,7 +460,8 @@ if isfile(outer_path)
             mu_at_boundary=Bool(row.mu_at_boundary), best_result=nothing,
         )
     end
-    println("resumed_complete_outer_profiles=$(length(profiles))")
+    println("resumed_complete_outer_profiles=$(length(profiles)) " *
+            "excluded_final_audit_rows=$(excluded_final_audits[])")
 end
 
 function record_outer!(summary, source, seconds)

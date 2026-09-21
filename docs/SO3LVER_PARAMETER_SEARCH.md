@@ -61,6 +61,23 @@ at the multi-start stage.  A two-start N=3 end-to-end regression exercises the
 selector, Nelder--Mead search, best-point recheck, six robustness neighbors,
 and final result writing.
 
+If a later job stops after writing `robustness_neighbors.csv` but before
+`best.toml`, do not blindly rerun the outer optimizer.  The normal resume loader
+excludes the previous `best_recheck` and `robustness_*` audit rows from candidate
+selection, preventing a robustness neighbor from being promoted into a new
+search minimum merely because it is present in the trace.  When all six
+robustness rows are already complete, instead run
+`scripts/so3lver_finalize_nested.jl`: it validates the checkpoints, recomputes
+only the fixed anchor needed by the q5 guard, and writes `top_candidates.csv`
+and `best.toml` without repeating the parameter search.
+
+Job 633223 reached exactly that state: all 4811 point evaluations, 209 unique
+search profiles, the best recheck, and all six robustness neighbors were saved
+before Julia received `SIGBUS`.  Checkpoint finalization recovered an accepted
+N=6 result; `best.toml` records the recovery mode and notes that detailed
+in-memory Optim run summaries could not be reconstructed, while the complete
+trajectory remains in `outer_evaluations.csv`.
+
 ## Matched N=7 finite-size search
 
 While the N=6 production search is running, the same nested stable-six method
