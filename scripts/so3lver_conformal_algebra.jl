@@ -136,6 +136,14 @@ MottJainED.atomic_csv(
     joinpath(output, "algebra_channel_residuals.csv"),
     DataFrame(result.channel_rows),
 )
+MottJainED.atomic_csv(
+    joinpath(output, "algebra_mixed_commutator_residuals.csv"),
+    DataFrame(result.mixed_commutator_rows),
+)
+MottJainED.atomic_csv(
+    joinpath(output, "algebra_mixed_commutator_components.csv"),
+    DataFrame(result.mixed_commutator_pair_rows),
+)
 
 k2_rows = NamedTuple[]
 k2_vector_rows = NamedTuple[]
@@ -181,6 +189,15 @@ scalar_commutator_fractional_residuals = [
 scalar_commutator_rms_fraction = isempty(scalar_commutator_fractional_residuals) ?
     NaN : sqrt(sum(abs2, scalar_commutator_fractional_residuals) /
                length(scalar_commutator_fractional_residuals))
+maximum_mixed_commutator_fraction = maximum(
+    getproperty.(result.mixed_commutator_rows, :fractional_residual),
+)
+maximum_p_commutator_fraction = maximum(
+    getproperty.(result.mixed_commutator_rows, :p_commutator_fraction),
+)
+maximum_k_commutator_fraction = maximum(
+    getproperty.(result.mixed_commutator_rows, :k_commutator_fraction),
+)
 summary = DataFrame([(
     nm1=nm,
     heavy_space_mode=String(result.heavy_space_mode),
@@ -194,6 +211,9 @@ summary = DataFrame([(
     maximum_primary_p_low_energy_leakage_fraction=
         maximum_p_low_energy_leakage_fraction,
     scalar_commutator_rms_fraction=scalar_commutator_rms_fraction,
+    maximum_mixed_commutator_fraction=maximum_mixed_commutator_fraction,
+    maximum_p_commutator_fraction=maximum_p_commutator_fraction,
+    maximum_k_commutator_fraction=maximum_k_commutator_fraction,
     commutator_normalization_valid=result.fit.commutator_normalization_valid,
     workspace_seconds=workspace_seconds,
     analysis_seconds=analysis_seconds,
@@ -220,6 +240,18 @@ metadata = Dict{String,Any}(
     "commutator_normalization_valid" => result.fit.commutator_normalization_valid,
     "commutator_normalization_scale" => result.fit.commutator_normalization_scale,
     "scalar_commutator_residuals" => result.fit.scalar_commutator_residuals,
+    "mixed_commutator_fractional_residuals" => Dict(
+        String(row.label) => row.fractional_residual
+        for row in result.mixed_commutator_rows
+    ),
+    "p_commutator_fractional_residuals" => Dict(
+        String(row.label) => row.p_commutator_fraction
+        for row in result.mixed_commutator_rows
+    ),
+    "k_commutator_fractional_residuals" => Dict(
+        String(row.label) => row.k_commutator_fraction
+        for row in result.mixed_commutator_rows
+    ),
     "normalization_rank" => result.fit.normalization_rank,
     "generalized_eigenvalues" => result.fit.spectrum,
     "normalization_eigenvalues" => result.fit.normalization_eigenvalues,
@@ -253,6 +285,13 @@ for row in result.primary_rows
         "P_dilatation=$(row.p_dilatation_fraction) " *
         "P_leakage=$(row.p_low_energy_leakage_fraction) " *
         "KP_residual=$(row.kp_commutator_fractional_residual)",
+    )
+end
+for row in result.mixed_commutator_rows
+    println(
+        "primary=$(row.label) mixed_commutator_fraction=$(row.fractional_residual) " *
+        "P_commutator_fraction=$(row.p_commutator_fraction) " *
+        "K_commutator_fraction=$(row.k_commutator_fraction)",
     )
 end
 println("algebra_result=$output")

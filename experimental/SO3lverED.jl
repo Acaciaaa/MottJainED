@@ -6,6 +6,7 @@ using FuzzifiED.SO3lver
 using LinearAlgebra
 using MottJainED
 using Optim
+using WignerSymbols
 
 const COMPONENT_ORDER = (:Uf, :Uf0, :U0, :Vf, :Vf0, :V0, :t, :mu)
 const CFT_BLOCK_KEYS = (
@@ -961,6 +962,405 @@ end
 
 _vector_target_ells(ell::Int) = ell == 0 ? [1] : collect((ell - 1):(ell + 1))
 
+const _SPHERICAL_COMPONENTS = (-1, 0, 1)
+const _SPHERICAL_TO_CARTESIAN = ComplexF64[
+    inv(sqrt(2)) 0 -inv(sqrt(2));
+    im / sqrt(2) 0 im / sqrt(2);
+    0 1 0
+]
+const _CARTESIAN_AXES = (:x, :y, :z)
+
+function _wigner_eckart_coefficient(
+    initial_ell::Int,
+    initial_m::Int,
+    component::Int,
+    final_ell::Int,
+)
+    final_m = initial_m + component
+    abs(initial_m) <= initial_ell || return 0.0
+    component in _SPHERICAL_COMPONENTS || return 0.0
+    abs(final_m) <= final_ell || return 0.0
+    # FuzzifiED's builders divide representative matrix elements by this
+    # Clebsch--Gordan coefficient (rather than by the alternative 3j-normalized
+    # reduced element stated in part of the package documentation).
+    return Float64(clebschgordan(
+        initial_ell, initial_m, 1, component, final_ell, final_m,
+    ))
+end
+
+function _add_scaled_state!(
+    states::Dict{Tuple{Int,Int},Vector{ComplexF64}},
+    key::Tuple{Int,Int},
+    vector::AbstractVector{<:Number},
+    scale::Number,
+)
+    iszero(scale) && return states
+    destination = get!(states, key) do
+        zeros(ComplexF64, length(vector))
+    end
+    @. destination += scale * vector
+    return states
+end
+
+function _add_angular_momentum_state!(
+    states::Dict{Tuple{Int,Int},Vector{ComplexF64}},
+    source::AbstractVector{<:Real},
+    ell::Int,
+    m::Int,
+    axis::Symbol,
+    scale::Number,
+)
+    if axis == :z
+        _add_scaled_state!(states, (ell, m), source, scale * m)
+        return states
+    end
+    raising = m < ell ? sqrt((ell - m) * (ell + m + 1)) : 0.0
+    lowering = m > -ell ? sqrt((ell + m) * (ell - m + 1)) : 0.0
+    if axis == :x
+        raising > 0 && _add_scaled_state!(
+            states, (ell, m + 1), source, scale * raising / 2,
+        )
+        lowering > 0 && _add_scaled_state!(
+            states, (ell, m - 1), source, scale * lowering / 2,
+        )
+    elseif axis == :y
+        raising > 0 && _add_scaled_state!(
+            states, (ell, m + 1), source, -im * scale * raising / 2,
+        )
+        lowering > 0 && _add_scaled_state!(
+            states, (ell, m - 1), source, im * scale * lowering / 2,
+        )
+    else
+        throw(ArgumentError("axis must be :x, :y, or :z"))
+    end
+    return states
+end
+
+function _rotation_axis(first_axis::Int, second_axis::Int)
+    first_axis == second_axis && return nothing
+    if (first_axis, second_axis) == (1, 2)
+        return (:z, 1.0)
+    elseif (first_axis, second_axis) == (2, 1)
+        return (:z, -1.0)
+    elseif (first_axis, second_axis) == (2, 3)
+        return (:x, 1.0)
+    elseif (first_axis, second_axis) == (3, 2)
+        return (:x, -1.0)
+    elseif (first_axis, second_axis) == (3, 1)
+        return (:y, 1.0)
+    else
+        return (:y, -1.0)
+    end
+end
+
+_state_norm2(states) = sum(
+    real(dot(vector, vector)) for vector in values(states); init=0.0,
+)
+
+function _state_difference_norm2(lhs, rhs)
+    keys_union = union(keys(lhs), keys(rhs))
+    return sum(keys_union; init=0.0) do key
+        if haskey(lhs, key) && haskey(rhs, key)
+            difference = lhs[key] - rhs[key]
+            real(dot(difference, difference))
+        elseif haskey(lhs, key)
+            real(dot(lhs[key], lhs[key]))
+        else
+            real(dot(rhs[key], rhs[key]))
+        end
+    end
+end
+
+function _cartesian_pair_state(spherical, first_axis::Int, second_axis::Int)
+    output = Dict{Tuple{Int,Int},Vector{ComplexF64}}()
+    for (q_index, q) in enumerate(_SPHERICAL_COMPONENTS)
+        first_coefficient = _SPHERICAL_TO_CARTESIAN[first_axis, q_index]
+        iszero(first_coefficient) && continue
+        for (r_index, r) in enumerate(_SPHERICAL_COMPONENTS)
+            coefficient = first_coefficient *
+                          _SPHERICAL_TO_CARTESIAN[second_axis, r_index]
+            iszero(coefficient) && continue
+            for (key, vector) in spherical[(q, r)]
+                _add_scaled_state!(output, key, vector, coefficient)
+            end
+        end
+    end
+    return output
+end
+
+"""
+Evaluate the spin-resolved two-generator algebra on one SO(3) multiplet.
+
+The magnetic substates and Cartesian components are reconstructed from native
+SO(3)lver reduced matrix elements with the package's Wigner--Eckart
+convention.  The audit covers `[K_i,P_j]`, `[P_i,P_j]`, and `[K_i,K_j]`.
+Both operator orderings propagate through complete projected SO(3) blocks;
+energy eigenvectors are used only for the initial primary.
+"""
+function _mixed_commutator_audit(
+    source::AbstractVector{<:Real},
+    representation::Symbol,
+    ell::Int,
+    source_energy::Real,
+    ground_energy::Real,
+    hamiltonians,
+    operators,
+    coefficients::AbstractVector{<:Real},
+    factor::Real,
+)
+    source_key = (representation, ell)
+    intermediate_ells = _vector_target_ells(ell)
+    first_p = Dict{Int,Vector{Float64}}()
+    first_k = Dict{Int,Vector{Float64}}()
+    k_after_p = Dict{Tuple{Int,Int},Vector{Float64}}()
+    p_after_k = Dict{Tuple{Int,Int},Vector{Float64}}()
+    p_after_p = Dict{Tuple{Int,Int},Vector{Float64}}()
+    k_after_k = Dict{Tuple{Int,Int},Vector{Float64}}()
+    for intermediate_ell in intermediate_ells
+        intermediate_key = (representation, intermediate_ell)
+        operator_set = operators(representation, ell, intermediate_ell)
+        first_p[intermediate_ell] = apply_so3_conformal_generator(
+            source, operator_set, coefficients,
+            hamiltonians[source_key], hamiltonians[intermediate_key];
+            factor, generator=:p,
+        )
+        first_k[intermediate_ell] = apply_so3_conformal_generator(
+            source, operator_set, coefficients,
+            hamiltonians[source_key], hamiltonians[intermediate_key];
+            factor, generator=:k,
+        )
+        for final_ell in _vector_target_ells(intermediate_ell)
+            final_key = (representation, final_ell)
+            haskey(hamiltonians, final_key) || continue
+            second_operator_set = operators(
+                representation, intermediate_ell, final_ell,
+            )
+            k_after_p[(intermediate_ell, final_ell)] =
+                apply_so3_conformal_generator(
+                    first_p[intermediate_ell], second_operator_set, coefficients,
+                    hamiltonians[intermediate_key], hamiltonians[final_key];
+                    factor, generator=:k,
+                )
+            p_after_k[(intermediate_ell, final_ell)] =
+                apply_so3_conformal_generator(
+                    first_k[intermediate_ell], second_operator_set, coefficients,
+                    hamiltonians[intermediate_key], hamiltonians[final_key];
+                    factor, generator=:p,
+                )
+            p_after_p[(intermediate_ell, final_ell)] =
+                apply_so3_conformal_generator(
+                    first_p[intermediate_ell], second_operator_set, coefficients,
+                    hamiltonians[intermediate_key], hamiltonians[final_key];
+                    factor, generator=:p,
+                )
+            k_after_k[(intermediate_ell, final_ell)] =
+                apply_so3_conformal_generator(
+                    first_k[intermediate_ell], second_operator_set, coefficients,
+                    hamiltonians[intermediate_key], hamiltonians[final_key];
+                    factor, generator=:k,
+                )
+        end
+    end
+
+    delta = (Float64(source_energy) - Float64(ground_energy)) / Float64(factor)
+    total_lhs_norm2 = 0.0
+    total_rhs_norm2 = 0.0
+    total_residual_norm2 = 0.0
+    total_p_commutator_norm2 = 0.0
+    total_k_commutator_norm2 = 0.0
+    pair_accumulators = Dict(
+        (first_axis, second_axis) => Dict(
+            :lhs_norm2 => 0.0,
+            :rhs_norm2 => 0.0,
+            :residual_norm2 => 0.0,
+            :p_commutator_norm2 => 0.0,
+            :k_commutator_norm2 => 0.0,
+            :lhs_diagonal_expectation => 0.0,
+            :rhs_diagonal_expectation => 0.0,
+        )
+        for first_axis in 1:3 for second_axis in 1:3
+    )
+
+    for m in -ell:ell
+        spherical = Dict{Tuple{Int,Int},Dict{Tuple{Int,Int},Vector{ComplexF64}}}()
+        spherical_pp = Dict{Tuple{Int,Int},Dict{Tuple{Int,Int},Vector{ComplexF64}}}()
+        spherical_kk = Dict{Tuple{Int,Int},Dict{Tuple{Int,Int},Vector{ComplexF64}}}()
+        for q in _SPHERICAL_COMPONENTS, r in _SPHERICAL_COMPONENTS
+            output = Dict{Tuple{Int,Int},Vector{ComplexF64}}()
+            pp_output = Dict{Tuple{Int,Int},Vector{ComplexF64}}()
+            kk_output = Dict{Tuple{Int,Int},Vector{ComplexF64}}()
+            for intermediate_ell in intermediate_ells
+                # K_q P_r
+                first_coefficient = _wigner_eckart_coefficient(
+                    ell, m, r, intermediate_ell,
+                )
+                intermediate_m = m + r
+                if !iszero(first_coefficient)
+                    for final_ell in _vector_target_ells(intermediate_ell)
+                        key = (intermediate_ell, final_ell)
+                        haskey(k_after_p, key) || continue
+                        second_coefficient = _wigner_eckart_coefficient(
+                            intermediate_ell, intermediate_m, q, final_ell,
+                        )
+                        _add_scaled_state!(
+                            output, (final_ell, intermediate_m + q),
+                            k_after_p[key], first_coefficient * second_coefficient,
+                        )
+                        _add_scaled_state!(
+                            pp_output, (final_ell, intermediate_m + q),
+                            p_after_p[key], first_coefficient * second_coefficient,
+                        )
+                    end
+                end
+
+                # -P_r K_q
+                first_coefficient = _wigner_eckart_coefficient(
+                    ell, m, q, intermediate_ell,
+                )
+                intermediate_m = m + q
+                if !iszero(first_coefficient)
+                    for final_ell in _vector_target_ells(intermediate_ell)
+                        key = (intermediate_ell, final_ell)
+                        haskey(p_after_k, key) || continue
+                        second_coefficient = _wigner_eckart_coefficient(
+                            intermediate_ell, intermediate_m, r, final_ell,
+                        )
+                        _add_scaled_state!(
+                            output, (final_ell, intermediate_m + r),
+                            p_after_k[key],
+                            -first_coefficient * second_coefficient,
+                        )
+                        _add_scaled_state!(
+                            pp_output, (final_ell, intermediate_m + r),
+                            p_after_p[key],
+                            -first_coefficient * second_coefficient,
+                        )
+                    end
+                end
+
+                # K_q K_r - K_r K_q uses the same angular coefficients as
+                # the two paths above, with K for both actions.
+                first_coefficient = _wigner_eckart_coefficient(
+                    ell, m, r, intermediate_ell,
+                )
+                intermediate_m = m + r
+                if !iszero(first_coefficient)
+                    for final_ell in _vector_target_ells(intermediate_ell)
+                        key = (intermediate_ell, final_ell)
+                        haskey(k_after_k, key) || continue
+                        second_coefficient = _wigner_eckart_coefficient(
+                            intermediate_ell, intermediate_m, q, final_ell,
+                        )
+                        _add_scaled_state!(
+                            kk_output, (final_ell, intermediate_m + q),
+                            k_after_k[key], first_coefficient * second_coefficient,
+                        )
+                    end
+                end
+                first_coefficient = _wigner_eckart_coefficient(
+                    ell, m, q, intermediate_ell,
+                )
+                intermediate_m = m + q
+                if !iszero(first_coefficient)
+                    for final_ell in _vector_target_ells(intermediate_ell)
+                        key = (intermediate_ell, final_ell)
+                        haskey(k_after_k, key) || continue
+                        second_coefficient = _wigner_eckart_coefficient(
+                            intermediate_ell, intermediate_m, r, final_ell,
+                        )
+                        _add_scaled_state!(
+                            kk_output, (final_ell, intermediate_m + r),
+                            k_after_k[key],
+                            -first_coefficient * second_coefficient,
+                        )
+                    end
+                end
+            end
+            spherical[(q, r)] = output
+            spherical_pp[(q, r)] = pp_output
+            spherical_kk[(q, r)] = kk_output
+        end
+
+        for first_axis in 1:3, second_axis in 1:3
+            lhs = _cartesian_pair_state(spherical, first_axis, second_axis)
+
+            rhs = Dict{Tuple{Int,Int},Vector{ComplexF64}}()
+            if first_axis == second_axis
+                _add_scaled_state!(rhs, (ell, m), source, 2delta)
+            else
+                axis, orientation = _rotation_axis(first_axis, second_axis)
+                _add_angular_momentum_state!(
+                    rhs, source, ell, m, axis, -2im * orientation,
+                )
+            end
+            lhs_norm2 = _state_norm2(lhs)
+            rhs_norm2 = _state_norm2(rhs)
+            residual_norm2 = _state_difference_norm2(lhs, rhs)
+            total_lhs_norm2 += lhs_norm2
+            total_rhs_norm2 += rhs_norm2
+            total_residual_norm2 += residual_norm2
+            accumulator = pair_accumulators[(first_axis, second_axis)]
+            accumulator[:lhs_norm2] += lhs_norm2
+            accumulator[:rhs_norm2] += rhs_norm2
+            accumulator[:residual_norm2] += residual_norm2
+            if first_axis < second_axis
+                p_commutator_norm2 = _state_norm2(_cartesian_pair_state(
+                    spherical_pp, first_axis, second_axis,
+                ))
+                k_commutator_norm2 = _state_norm2(_cartesian_pair_state(
+                    spherical_kk, first_axis, second_axis,
+                ))
+                total_p_commutator_norm2 += p_commutator_norm2
+                total_k_commutator_norm2 += k_commutator_norm2
+                accumulator[:p_commutator_norm2] += p_commutator_norm2
+                accumulator[:k_commutator_norm2] += k_commutator_norm2
+            end
+            diagonal_key = (ell, m)
+            accumulator[:lhs_diagonal_expectation] += haskey(lhs, diagonal_key) ?
+                real(dot(source, lhs[diagonal_key])) : 0.0
+            accumulator[:rhs_diagonal_expectation] += haskey(rhs, diagonal_key) ?
+                real(dot(source, rhs[diagonal_key])) : 0.0
+        end
+    end
+
+    multiplet_size = 2ell + 1
+    pair_rows = NamedTuple[]
+    for first_axis in 1:3, second_axis in 1:3
+        accumulator = pair_accumulators[(first_axis, second_axis)]
+        push!(pair_rows, (
+            first_axis=_CARTESIAN_AXES[first_axis],
+            second_axis=_CARTESIAN_AXES[second_axis],
+            lhs_norm2=accumulator[:lhs_norm2] / multiplet_size,
+            rhs_norm2=accumulator[:rhs_norm2] / multiplet_size,
+            residual_norm2=accumulator[:residual_norm2] / multiplet_size,
+            p_commutator_norm2=
+                accumulator[:p_commutator_norm2] / multiplet_size,
+            k_commutator_norm2=
+                accumulator[:k_commutator_norm2] / multiplet_size,
+            fractional_residual=accumulator[:rhs_norm2] > eps(Float64) ?
+                accumulator[:residual_norm2] / accumulator[:rhs_norm2] : NaN,
+            lhs_diagonal_expectation=
+                accumulator[:lhs_diagonal_expectation] / multiplet_size,
+            rhs_diagonal_expectation=
+                accumulator[:rhs_diagonal_expectation] / multiplet_size,
+        ))
+    end
+    return (
+        lhs_norm2=total_lhs_norm2 / multiplet_size,
+        rhs_norm2=total_rhs_norm2 / multiplet_size,
+        residual_norm2=total_residual_norm2 / multiplet_size,
+        fractional_residual=total_residual_norm2 /
+            max(total_rhs_norm2, eps(Float64)),
+        p_commutator_norm2=total_p_commutator_norm2 / multiplet_size,
+        k_commutator_norm2=total_k_commutator_norm2 / multiplet_size,
+        p_commutator_fraction=total_p_commutator_norm2 /
+            max(total_rhs_norm2, eps(Float64)),
+        k_commutator_fraction=total_k_commutator_norm2 /
+            max(total_rhs_norm2, eps(Float64)),
+        pair_rows=pair_rows,
+    )
+end
+
 function _default_conformal_block_counts(primary_specs)
     counts = Dict{Tuple{Symbol,Int},Int}((:singlet, 0) => 4)
     for spec in primary_specs
@@ -992,6 +1392,7 @@ function analyze_so3_conformal_algebra(
     dilatation_weight::Real=1.0,
     descendant_weight::Real=1.0,
     descendant_state_count::Int=6,
+    mixed_commutator::Bool=true,
     eig_tol::Real=1.0e-8,
     ncv::Int=18,
     gram_rtol::Real=1.0e-10,
@@ -1019,16 +1420,25 @@ function analyze_so3_conformal_algebra(
         :adjoint => adjoint_workspace,
     )
     required_blocks = Set{Tuple{Symbol,Int}}(((:singlet, 0),))
+    spectral_blocks = Set{Tuple{Symbol,Int}}(((:singlet, 0),))
     for spec in primary_specs
         representation_data(spec.representation)
         spec.ell >= 0 || throw(ArgumentError("primary angular momentum must be non-negative"))
         spec.rank >= 1 || throw(ArgumentError("primary rank must be positive"))
         push!(required_blocks, (spec.representation, spec.ell))
+        push!(spectral_blocks, (spec.representation, spec.ell))
         for target_ell in _vector_target_ells(spec.ell)
             push!(required_blocks, (spec.representation, target_ell))
+            push!(spectral_blocks, (spec.representation, target_ell))
+            if mixed_commutator
+                for final_ell in _vector_target_ells(target_ell)
+                    push!(required_blocks, (spec.representation, final_ell))
+                end
+            end
         end
     end
     push!(required_blocks, (:singlet, 1))
+    push!(spectral_blocks, (:singlet, 1))
 
     hamiltonians = Dict{Tuple{Symbol,Int},SO3Hamiltonian}()
     for (representation, ell) in sort!(collect(required_blocks))
@@ -1047,7 +1457,7 @@ function analyze_so3_conformal_algebra(
         key = (spec.representation, spec.ell)
         requested_counts[key] = max(get(requested_counts, key, 0), spec.rank)
     end
-    for key in required_blocks
+    for key in spectral_blocks
         requested_counts[key] = max(
             get(requested_counts, key, 0), descendant_state_count,
         )
@@ -1147,11 +1557,12 @@ function analyze_so3_conformal_algebra(
         ))
         lambda = channel.lambda_design * direction
         raw_commutator = channel.commutator_numerator * direction
-        # For L=0,m=0 and the q=0 Cartesian/spherical component, the square
-        # of the Wigner-Eckart 3j factor is 1/3.  Multiplying
-        # <[Kz,Pz]>=2D by `factor` removes the cylinder scale from both sides.
+        # FuzzifiED stores Clebsch--Gordan-normalized reduced elements.  For
+        # L=0,m=0 -> L=1,m=0 the CG coefficient is one, so no extra 1/3
+        # appears.  Multiplying <[Kz,Pz]>=2D by `factor` removes the cylinder
+        # scale from both sides.
         push!(scalar_commutator_coefficients,
-              real(dot(lambda, raw_commutator)) / 3)
+              real(dot(lambda, raw_commutator)))
         push!(scalar_commutator_targets,
               2 * (channel.source_energy - ground_energy))
     end
@@ -1235,7 +1646,7 @@ function analyze_so3_conformal_algebra(
             ))
         end
         scalar_commutator_lhs = spec.ell == 0 ?
-            (totals[:p] - totals[:k]) / 3 : NaN
+            totals[:p] - totals[:k] : NaN
         scalar_commutator_target = spec.ell == 0 ?
             2 * (energies[(spec.representation, spec.ell)][spec.rank] - ground_energy) /
                 factor : NaN
@@ -1267,6 +1678,48 @@ function analyze_so3_conformal_algebra(
     end
 
     vacuum_norm2 = real(dot(vacuum_design * coefficients, vacuum_design * coefficients))
+    mixed_commutator_rows = NamedTuple[]
+    mixed_commutator_pair_rows = NamedTuple[]
+    if mixed_commutator
+        for spec in primary_specs
+            source_key = (spec.representation, spec.ell)
+            audit = _mixed_commutator_audit(
+                view(states[source_key], :, spec.rank),
+                spec.representation,
+                spec.ell,
+                energies[source_key][spec.rank],
+                ground_energy,
+                hamiltonians,
+                operators,
+                coefficients,
+                factor,
+            )
+            push!(mixed_commutator_rows, (
+                label=spec.label,
+                representation=spec.representation,
+                ell=spec.ell,
+                rank=spec.rank,
+                lhs_norm2=audit.lhs_norm2,
+                rhs_norm2=audit.rhs_norm2,
+                residual_norm2=audit.residual_norm2,
+                fractional_residual=audit.fractional_residual,
+                p_commutator_norm2=audit.p_commutator_norm2,
+                k_commutator_norm2=audit.k_commutator_norm2,
+                p_commutator_fraction=audit.p_commutator_fraction,
+                k_commutator_fraction=audit.k_commutator_fraction,
+                used_for_fit=spec.label in fit.fit_primary_labels,
+            ))
+            append!(mixed_commutator_pair_rows, (
+                merge((
+                    label=spec.label,
+                    representation=spec.representation,
+                    ell=spec.ell,
+                    rank=spec.rank,
+                ), row)
+                for row in audit.pair_rows
+            ))
+        end
+    end
     k2_results = Dict{Tuple{Symbol,Int},NamedTuple}()
     for (source_key, source_states) in states
         source_key in k2_source_keys || continue
@@ -1324,6 +1777,8 @@ function analyze_so3_conformal_algebra(
         fit=fit,
         primary_rows=primary_rows,
         channel_rows=channel_rows,
+        mixed_commutator_rows=mixed_commutator_rows,
+        mixed_commutator_pair_rows=mixed_commutator_pair_rows,
         k2=k2_results,
         vacuum_norm2=vacuum_norm2,
         energies=energies,

@@ -285,6 +285,44 @@ end
         (:singlet, 0), (:singlet, 2), (:adjoint, 0), (:adjoint, 1),
     ))
     @test all(sector -> issorted(sector.eigenvalues), values(result.k2))
+    @test length(result.mixed_commutator_rows) == 4
+    @test length(result.mixed_commutator_pair_rows) == 36
+    @test all(row -> isfinite(row.fractional_residual) &&
+                     row.fractional_residual >= 0 &&
+                     isfinite(row.p_commutator_fraction) &&
+                     row.p_commutator_fraction >= 0 &&
+                     isfinite(row.k_commutator_fraction) &&
+                     row.k_commutator_fraction >= 0,
+              result.mixed_commutator_rows)
+    @test haskey(result.dimensions, (:singlet, 4))
+    @test haskey(result.dimensions, (:adjoint, 3))
+    @test !haskey(result.energies, (:singlet, 4))
+    @test !haskey(result.energies, (:adjoint, 3))
+
+    # The full magnetic-substate reconstruction must agree with the simpler
+    # scalar reduced-matrix-element identity used for generator normalization.
+    for primary in filter(row -> row.ell == 0, result.primary_rows)
+        diagonal_pairs = filter(
+            row -> row.label == primary.label &&
+                   row.first_axis == row.second_axis,
+            result.mixed_commutator_pair_rows,
+        )
+        @test length(diagonal_pairs) == 3
+        @test all(
+            row -> isapprox(
+                row.lhs_diagonal_expectation, primary.kp_commutator_lhs;
+                atol=2e-10, rtol=2e-10,
+            ),
+            diagonal_pairs,
+        )
+        @test all(
+            row -> isapprox(
+                row.rhs_diagonal_expectation, primary.kp_commutator_target;
+                atol=2e-10, rtol=2e-10,
+            ),
+            diagonal_pairs,
+        )
+    end
 
     # P and K are formed from exact cross-block Hamiltonian actions, not from
     # a low-energy spectral sum.  Verify their defining identities directly.

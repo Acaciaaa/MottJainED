@@ -21,7 +21,7 @@ Uf, Vf, U0, V0, Uf0, Vf0, t, mu
 families.  A single coefficient vector is shared by the singlet and adjoint
 representations.
 
-## Algebra used in the first pilot
+## Algebra implemented in the pilot
 
 For `D=(H-E0)/factor` and `Lambda=P+K`, the code applies
 
@@ -63,10 +63,13 @@ cylinder scale.
 After finding the scale-invariant generator direction, the overall generator
 normalization is fixed algebraically from the scalar-primary expectation value
 `[Kz,Pz]=2D`.  For an `L=0,m=0` source, the reduced-matrix-element convention
-used by SO3lver supplies the `1/3` Wigner-Eckart factor.  The independently
-normalized residuals for the scalar training primaries are written to the
-primary table.  A scalar reserved as a holdout is not used for this
-normalization.
+actually used by the FuzzifiED builders is Clebsch--Gordan normalized: the
+`L=0,m=0 -> L=1,m=0` coefficient is one.  There is therefore no extra `1/3`
+in this normalization.  This was checked directly against the reverse reduced
+operator, which carries the required `-sqrt(3)` adjoint factor.  The
+independently normalized residuals for the scalar training primaries are
+written to the primary table.  A scalar reserved as a holdout is not used for
+this normalization.
 
 The audit then reports, separately for every primary and allowed target
 angular momentum:
@@ -76,13 +79,26 @@ angular momentum:
 - the normalized `[D,K]+K` residual;
 - `K^dagger K` eigenvalues and eigenvectors in each retained low-energy source
   subspace, allowing a finite-size primary to be a mixture of energy
-  eigenstates.
+  eigenstates;
+- all nine Cartesian components of
+  `[K_i,P_j]=2 delta_ij D-2i M_ij` on every magnetic substate of `S,O,J,T`;
+- the three independent components of `[P_i,P_j]=0` and `[K_i,K_j]=0`.
 
-Rotational covariance is exact by construction because the operators are
-native rank-one SO(3) tensors.  A coupled-tensor implementation of the mixed
-commutator `[K_i,P_j]=2 delta_ij D-2i M_ij`, followed by `[P_i,P_j]` and
-`[K_i,K_j]`, remains a separate second step; it must retain the SO(3) reduced
-matrix-element normalization and all full intermediate blocks.
+Magnetic substates are reconstructed from the native reduced matrices using
+the same Clebsch--Gordan convention as the FuzzifiED source.  Both orders of
+each two-generator product propagate through every allowed full projected
+SO(3) block.  In particular, the `T` audit includes singlet `L=4` as a final
+block, but does not diagonalize it.  The Lorentz/rotation subalgebra and the
+action of rotations on rank-one tensors are exact by construction; the
+nontrivial finite-size tests are therefore the dilation and three commutators
+listed above.
+
+The mixed residual is reported as a squared-norm ratio
+`||[K,P]-RHS||^2/||RHS||^2`, summed over Cartesian components and averaged over
+the source multiplet.  Since the `P-P` and `K-K` targets vanish, their squared
+norms use the same mixed-algebra RHS norm as a common scale.  These complete
+commutators are currently strict audits, not terms in the generalized
+eigenproblem that fits the generator direction.
 
 ## Run
 
@@ -104,6 +120,8 @@ The output directory contains:
 - `algebra_generator_coefficients.csv`;
 - `algebra_primary_residuals.csv`;
 - `algebra_channel_residuals.csv`;
+- `algebra_mixed_commutator_residuals.csv` and
+  `algebra_mixed_commutator_components.csv`;
 - `algebra_k2_modes.csv` and `algebra_k2_eigenvectors.csv`;
 - `algebra_metadata.toml` with the exact point, dimensions, fitted scale, and
   numerical-rank diagnostics.
@@ -113,7 +131,7 @@ Hamiltonian points have been audited and at least one primary family has been
 reserved as a holdout.  The fit/holdout labels are explicit in the TOML and in
 every result row.
 
-## First N=6 projected audit
+## N=6 projected audit
 
 The first local comparison used identical algebra settings at two projected
 Hamiltonian points:
@@ -129,6 +147,25 @@ through `T`, but is worse in the independently normalized scalar mixed
 commutator.  Thus the algebra audit does not merely reproduce the old spectrum
 ranking.
 
+The complete spin-resolved commutators give a sharper and partly reversed
+comparison.  The entries below are squared-norm ratios; smaller is better.
+
+| point / fit | primary | mixed `[K,P]` | `[P,P]` | `[K,K]` |
+|---|---|---:|---:|---:|
+| latest grid, all-fit | `S` | 1.575518 | 0.790071 | 0.105246 |
+|  | `O` | 0.511485 | 0.218866 | 0.038025 |
+|  | `J` | 0.522079 | 0.195250 | 0.054469 |
+|  | `T` | 0.773485 | 0.056792 | 0.015652 |
+| original seed, all-fit | `S` | 1.563347 | 0.737772 | 0.097727 |
+|  | `O` | 0.476355 | 0.198575 | 0.030071 |
+|  | `J` | 0.493744 | 0.190626 | 0.054782 |
+|  | `T` | 0.796458 | 0.053145 | 0.014374 |
+
+Thus the latest spectrum point is better only in the `T` mixed commutator; the
+original seed is better in `S`, `O`, and `J`, and usually also in translation
+commutativity.  The complete-commutator audit therefore reverses the small
+preference for the latest grid point in the earlier generalized fit loss.
+
 At the latest point, fitting only `S,O` gives `factor=0.089870`.  The strict
 holdouts are
 
@@ -137,9 +174,15 @@ holdouts are
 | `J` | 0.094951 | 0.423245 | 0.054072 |
 | `T` | 0.169726 | 0.596291 | 0.079266 |
 
+For this scalar-only fit the mixed residuals on `(S,O,J,T)` are respectively
+`(1.548816, 0.580929, 0.515671, 0.750487)`.  Making the two scalar diagonal
+expectation values nearly exact therefore does not make their complete tensor
+commutator clean: the forbidden off-diagonal components remain large.
+
 This is not yet a clean conformal point: in particular the `T` holdout remains
-the dominant failure.  These numbers justify an algebra-driven parameter scan,
-but not yet a production optimization using a single scalar objective.  The
-next implementation step should add the spinning-state components of
-`[K_i,P_j]=2 delta_ij D-2iM_ij` and compare several more fixed Hamiltonian
-points before fixing the objective weights.
+the dominant failure under the original primary/dilation metrics, while `S`
+is the dominant failure of the full tensor algebra.  These numbers justify an
+algebra-driven parameter scan, but not yet a production optimization using a
+single scalar objective.  The next step is to choose fit/holdout weights for
+the complete commutators and test a small Hamiltonian scan before allowing a
+continuous outer optimizer to exploit them.
