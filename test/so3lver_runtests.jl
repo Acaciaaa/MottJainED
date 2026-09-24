@@ -242,6 +242,81 @@ end
           0.903883934619449 atol=2e-11
 end
 
+@testset "Projected native SO(3) conformal algebra" begin
+    couplings = Couplings(
+        Uf=0.48, U0=4.32, Uf0=1.68, Vf=0.0,
+        Vf0=0.3549772487682664, V0=0.0,
+        t=0.5, mu=0.22881105175318384,
+    )
+    singlet_model = build_so3_model(nm1=4, representation=:singlet)
+    singlet_workspace = build_workspace(
+        singlet_model; heavy_space_mode=:laughlin13, disp_std=false,
+    )
+    adjoint_model = build_so3_model(nm1=4, representation=:adjoint)
+    adjoint_workspace = build_workspace(
+        adjoint_model;
+        heavy_space=singlet_workspace.heavy_space,
+        heavy_space_mode=:laughlin13,
+        disp_std=false,
+    )
+    result = analyze_so3_conformal_algebra(
+        singlet_workspace, adjoint_workspace, couplings;
+        block_counts=Dict(
+            (:singlet, 0) => 3,
+            (:singlet, 2) => 2,
+            (:adjoint, 0) => 2,
+            (:adjoint, 1) => 2,
+        ),
+        factor_bounds=(0.005, 0.2),
+        eig_tol=1.0e-9,
+        ncv=12,
+        disp_std=false,
+    )
+
+    @test result.heavy_space_mode == :laughlin13
+    @test result.fit.factor_bounds[1] <= result.fit.factor <= result.fit.factor_bounds[2]
+    @test isfinite(result.fit.value)
+    @test result.fit.value >= 0
+    @test result.fit.normalization_rank >= 1
+    @test Set(getproperty.(result.primary_rows, :label)) == Set((:S, :O, :J, :T))
+    @test all(row -> isfinite(row.k_fraction) && row.k_fraction >= 0,
+              result.primary_rows)
+    @test Set(keys(result.k2)) == Set((
+        (:singlet, 0), (:singlet, 2), (:adjoint, 0), (:adjoint, 1),
+    ))
+    @test all(sector -> issorted(sector.eigenvalues), values(result.k2))
+
+    # P and K are formed from exact cross-block Hamiltonian actions, not from
+    # a low-energy spectral sum.  Verify their defining identities directly.
+    h0 = build_hamiltonian(singlet_workspace, 0, couplings; disp_std=false)
+    h1 = build_hamiltonian(singlet_workspace, 1, couplings; disp_std=false)
+    _, states0 = solve(h0; k=2, vectors=true, disp_std=false)
+    operator_set = build_generator_operators(
+        h0.space, h1.space, build_generator_candidates(singlet_model);
+        disp_std=false,
+    )
+    source = view(states0, :, 2)
+    lambda = apply_so3_conformal_generator(
+        source, operator_set, result.fit.coefficients, h0, h1;
+        factor=result.fit.factor, generator=:lambda,
+    )
+    p_action = apply_so3_conformal_generator(
+        source, operator_set, result.fit.coefficients, h0, h1;
+        factor=result.fit.factor, generator=:p,
+    )
+    k_action = apply_so3_conformal_generator(
+        source, operator_set, result.fit.coefficients, h0, h1;
+        factor=result.fit.factor, generator=:k,
+    )
+    commutator = (
+        h1.operator * lambda -
+        apply_so3_generator(h0.operator * Vector(source), operator_set,
+                            result.fit.coefficients)
+    ) ./ result.fit.factor
+    @test p_action + k_action ≈ lambda atol=2e-11 rtol=2e-11
+    @test p_action - k_action ≈ commutator atol=2e-11 rtol=2e-11
+end
+
 @testset "SO(3)lver physical-block CFT score" begin
     blocks = Dict{Tuple{Symbol,Int},Vector{Float64}}(
         (:singlet, 0) => [0.0, 1.2, 3.2],

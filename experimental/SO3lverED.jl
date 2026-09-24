@@ -5,6 +5,7 @@ using FuzzifiED.JackToolkit
 using FuzzifiED.SO3lver
 using LinearAlgebra
 using MottJainED
+using Optim
 
 const COMPONENT_ORDER = (:Uf, :Uf0, :U0, :Vf, :Vf0, :V0, :t, :mu)
 const CFT_BLOCK_KEYS = (
@@ -486,6 +487,12 @@ sector_dimension(hamiltonian::SO3Hamiltonian) = hamiltonian.space.dim
 const GENERATOR_CANDIDATE_NAMES = (
     :Uf, :Vf, :U0, :V0, :Uf0, :Vf0, :t, :mu,
 )
+const DEFAULT_CONFORMAL_PRIMARY_SPECS = (
+    (label=:S, representation=:singlet, ell=0, rank=2),
+    (label=:O, representation=:adjoint, ell=0, rank=1),
+    (label=:J, representation=:adjoint, ell=1, rank=1),
+    (label=:T, representation=:singlet, ell=2, rank=1),
+)
 
 """The eight SU(3)-singlet microscopic rank-one tensors used to fit `Λ=P+K`."""
 struct SO3GeneratorCandidates
@@ -707,6 +714,625 @@ function apply_so3_generator(
     )
 end
 
+function _check_generator_hamiltonians(
+    operator_set::SO3GeneratorOperators,
+    initial_hamiltonian::SO3Hamiltonian,
+    final_hamiltonian::SO3Hamiltonian,
+)
+    operator_set.initial_space === initial_hamiltonian.space || throw(ArgumentError(
+        "generator initial space does not match the initial Hamiltonian",
+    ))
+    operator_set.final_space === final_hamiltonian.space || throw(ArgumentError(
+        "generator final space does not match the final Hamiltonian",
+    ))
+    initial_hamiltonian.workspace.model.representation ==
+        final_hamiltonian.workspace.model.representation || throw(ArgumentError(
+        "a singlet generator cannot change the internal representation",
+    ))
+    initial_hamiltonian.couplings == final_hamiltonian.couplings || throw(ArgumentError(
+        "initial and final Hamiltonians must use the same couplings",
+    ))
+    return nothing
+end
+
+"""
+Apply `Lambda=P+K`, `P`, or `K` without constructing a full-Fock operator.
+
+The commutator with `D=(H-E0)/factor` is evaluated by exact matrix-free
+Hamiltonian actions in the initial and final SO(3) blocks.  The vacuum energy
+cancels from `[D,Lambda]`, so this works for arbitrary input vectors and does
+not require a truncated sum over intermediate energy eigenstates.
+"""
+function apply_so3_conformal_generator(
+    input::AbstractVector{<:Real},
+    operator_set::SO3GeneratorOperators,
+    coefficients::AbstractVector{<:Real},
+    initial_hamiltonian::SO3Hamiltonian,
+    final_hamiltonian::SO3Hamiltonian;
+    factor::Real,
+    generator::Symbol=:lambda,
+)
+    generator in (:lambda, :p, :k) || throw(ArgumentError(
+        "generator must be :lambda, :p, or :k",
+    ))
+    factor_value = Float64(factor)
+    isfinite(factor_value) && factor_value > 0 || throw(ArgumentError(
+        "the dilatation scale factor must be positive and finite",
+    ))
+    _check_generator_hamiltonians(
+        operator_set, initial_hamiltonian, final_hamiltonian,
+    )
+    input_vector = Vector{Float64}(input)
+    lambda = apply_so3_generator(input_vector, operator_set, coefficients)
+    generator == :lambda && return lambda
+    h_input = initial_hamiltonian.operator * input_vector
+    commutator = (
+        final_hamiltonian.operator * lambda -
+        apply_so3_generator(h_input, operator_set, coefficients)
+    ) ./ factor_value
+    return generator == :p ? (lambda .+ commutator) ./ 2 :
+           (lambda .- commutator) ./ 2
+end
+
+"""Return `[D,P]-P` or `[D,K]+K` on an arbitrary SO(3)-adapted state."""
+function so3_dilatation_residual(
+    input::AbstractVector{<:Real},
+    operator_set::SO3GeneratorOperators,
+    coefficients::AbstractVector{<:Real},
+    initial_hamiltonian::SO3Hamiltonian,
+    final_hamiltonian::SO3Hamiltonian;
+    factor::Real,
+    generator::Symbol=:p,
+)
+    generator in (:p, :k) || throw(ArgumentError(
+        "dilatation residual is defined here only for :p or :k",
+    ))
+    input_vector = Vector{Float64}(input)
+    action = apply_so3_conformal_generator(
+        input_vector, operator_set, coefficients,
+        initial_hamiltonian, final_hamiltonian;
+        factor, generator,
+    )
+    h_input = initial_hamiltonian.operator * input_vector
+    action_on_h_input = apply_so3_conformal_generator(
+        h_input, operator_set, coefficients,
+        initial_hamiltonian, final_hamiltonian;
+        factor, generator,
+    )
+    commutator = (
+        final_hamiltonian.operator * action - action_on_h_input
+    ) ./ Float64(factor)
+    return generator == :p ? commutator .- action : commutator .+ action
+end
+
+function _operator_action_matrix(
+    states::AbstractMatrix{<:Real},
+    operator_set::SO3GeneratorOperators,
+    coefficients::AbstractVector{<:Real},
+)
+    return hcat((
+        apply_so3_generator(view(states, :, column), operator_set, coefficients)
+        for column in axes(states, 2)
+    )...)
+end
+
+function _candidate_action_matrix(
+    state::AbstractVector{<:Real},
+    operator_set::SO3GeneratorOperators,
+)
+    state_vector = Vector{Float64}(state)
+    return hcat((operator * state_vector for operator in operator_set.operators)...)
+end
+
+function _apply_hamiltonian_columns(
+    hamiltonian::SO3Hamiltonian,
+    matrix::AbstractMatrix{<:Real},
+)
+    return hcat((
+        hamiltonian.operator * Vector{Float64}(view(matrix, :, column))
+        for column in axes(matrix, 2)
+    )...)
+end
+
+function _minimum_generalized_eigenpair(
+    numerator::AbstractMatrix{<:Real},
+    denominator::AbstractMatrix{<:Real};
+    rtol::Real=1.0e-10,
+)
+    denominator_decomposition = eigen(Symmetric(Matrix{Float64}(denominator)))
+    maximum_value = maximum(denominator_decomposition.values; init=0.0)
+    cutoff = Float64(rtol) * maximum_value
+    kept = findall(>(cutoff), denominator_decomposition.values)
+    isempty(kept) && error("generator normalization Gram matrix has zero numerical rank")
+    whitening = denominator_decomposition.vectors[:, kept] *
+                Diagonal(inv.(sqrt.(denominator_decomposition.values[kept])))
+    reduced = Symmetric(whitening' * Matrix{Float64}(numerator) * whitening)
+    decomposition = eigen(reduced)
+    index = argmin(decomposition.values)
+    coefficients = whitening * decomposition.vectors[:, index]
+    coefficients ./= sqrt(real(dot(coefficients, denominator * coefficients)))
+    pivot = argmax(abs.(coefficients))
+    coefficients[pivot] < 0 && (coefficients .*= -1)
+    return (
+        value=max(0.0, Float64(decomposition.values[index])),
+        coefficients=coefficients,
+        spectrum=Float64.(decomposition.values),
+        normalization_rank=length(kept),
+        normalization_eigenvalues=Float64.(denominator_decomposition.values),
+    )
+end
+
+function _fit_primary_annihilating_generator(
+    channels,
+    vacuum_design::AbstractMatrix{<:Real};
+    factor_bounds::Tuple{<:Real,<:Real},
+    fit_primary_labels,
+    vacuum_weight::Real=1.0,
+    dilatation_weight::Real=1.0,
+    descendant_weight::Real=1.0,
+    gram_rtol::Real=1.0e-10,
+)
+    lower, upper = Float64.(factor_bounds)
+    0 < lower < upper || throw(ArgumentError(
+        "factor_bounds must be positive and increasing",
+    ))
+    labels = Set(Symbol.(collect(fit_primary_labels)))
+    available = Set(getproperty.(channels, :label))
+    isempty(labels) && throw(ArgumentError("fit_primary_labels cannot be empty"))
+    issubset(labels, available) || throw(ArgumentError(
+        "unknown fit primary labels: $(collect(setdiff(labels, available)))",
+    ))
+    selected = filter(channel -> channel.label in labels, channels)
+    isfinite(dilatation_weight) && dilatation_weight >= 0 || throw(ArgumentError(
+        "dilatation_weight must be finite and non-negative",
+    ))
+    isfinite(descendant_weight) && descendant_weight >= 0 || throw(ArgumentError(
+        "descendant_weight must be finite and non-negative",
+    ))
+    candidate_count = size(vacuum_design, 2)
+    denominator = zeros(Float64, candidate_count, candidate_count)
+    for channel in selected
+        denominator .+= channel.weight .* (channel.lambda_design' * channel.lambda_design)
+    end
+    vacuum_gram = Float64(vacuum_weight) .* (vacuum_design' * vacuum_design)
+
+    function fit_at_factor(factor)
+        numerator = copy(vacuum_gram)
+        for channel in selected
+            k_design = (
+                channel.lambda_design .- channel.commutator_numerator ./ factor
+            ) ./ 2
+            numerator .+= channel.weight .* (k_design' * k_design)
+            if dilatation_weight > 0
+                dilatation_design = (
+                    channel.second_commutator_numerator ./ factor^2 .-
+                    channel.lambda_design
+                ) ./ 2
+                numerator .+= Float64(dilatation_weight) .* channel.weight .*
+                    (dilatation_design' * dilatation_design)
+            end
+            if descendant_weight > 0
+                p_leakage_design = (
+                    channel.lambda_leakage_design .+
+                    channel.commutator_leakage_numerator ./ factor
+                ) ./ 2
+                numerator .+= Float64(descendant_weight) .* channel.weight .*
+                    (p_leakage_design' * p_leakage_design)
+            end
+        end
+        return _minimum_generalized_eigenpair(
+            numerator, denominator; rtol=gram_rtol,
+        )
+    end
+
+    log_scan = collect(range(log(lower), log(upper); length=41))
+    scan_factors = exp.(log_scan)
+    scan_values = [fit_at_factor(factor).value for factor in scan_factors]
+    scan_best = argmin(scan_values)
+    factors = Float64[lower, scan_factors[scan_best], upper]
+    optimizer_converged = true
+    if 1 < scan_best < length(log_scan)
+        optimization = Optim.optimize(
+            log_factor -> fit_at_factor(exp(log_factor)).value,
+            log_scan[scan_best - 1], log_scan[scan_best + 1], Optim.Brent();
+            rel_tol=1.0e-10, abs_tol=1.0e-12,
+        )
+        push!(factors, exp(Optim.minimizer(optimization)))
+        optimizer_converged = Optim.converged(optimization)
+    end
+    fits = map(fit_at_factor, factors)
+    best_index = argmin(getproperty.(fits, :value))
+    factor = factors[best_index]
+    fit = fits[best_index]
+    boundary_distance = min(log(factor / lower), log(upper / factor))
+    return merge(fit, (
+        factor=factor,
+        factor_bounds=(lower, upper),
+        factor_at_boundary=boundary_distance < 1.0e-5,
+        factor_scan=scan_factors,
+        factor_scan_values=scan_values,
+        fit_primary_labels=sort!(collect(labels)),
+        vacuum_weight=Float64(vacuum_weight),
+        dilatation_weight=Float64(dilatation_weight),
+        descendant_weight=Float64(descendant_weight),
+        optimizer_converged=optimizer_converged,
+    ))
+end
+
+_vector_target_ells(ell::Int) = ell == 0 ? [1] : collect((ell - 1):(ell + 1))
+
+function _default_conformal_block_counts(primary_specs)
+    counts = Dict{Tuple{Symbol,Int},Int}((:singlet, 0) => 4)
+    for spec in primary_specs
+        key = (spec.representation, spec.ell)
+        counts[key] = max(get(counts, key, 0), spec.rank + 2)
+    end
+    return counts
+end
+
+"""
+Audit a common microscopic `Lambda`, `P`, and `K` against several primaries.
+
+The generator coefficients and the cylinder energy scale are determined by a
+basis-invariant generalized eigenproblem that minimizes the full-block vacuum
+and `K|primary>` norms.  All target-state norms use exact SO(3)lver operator
+actions; no full-Fock construction and no low-energy intermediate-state
+truncation is used.  In addition to fixed candidate primaries, the function
+diagonalizes `K^dagger K` inside each requested low-energy source subspace.
+"""
+function analyze_so3_conformal_algebra(
+    singlet_workspace::SO3Workspace,
+    adjoint_workspace::SO3Workspace,
+    couplings::Couplings;
+    primary_specs=DEFAULT_CONFORMAL_PRIMARY_SPECS,
+    block_counts=_default_conformal_block_counts(primary_specs),
+    fit_primary_labels=getproperty.(primary_specs, :label),
+    factor_bounds::Tuple{<:Real,<:Real}=(0.01, 0.10),
+    vacuum_weight::Real=1.0,
+    dilatation_weight::Real=1.0,
+    descendant_weight::Real=1.0,
+    descendant_state_count::Int=6,
+    eig_tol::Real=1.0e-8,
+    ncv::Int=18,
+    gram_rtol::Real=1.0e-10,
+    disp_std::Bool=true,
+)
+    singlet_workspace.model.representation == :singlet || throw(ArgumentError(
+        "the first workspace must be the singlet representation",
+    ))
+    adjoint_workspace.model.representation == :adjoint || throw(ArgumentError(
+        "the second workspace must be the adjoint representation",
+    ))
+    singlet_workspace.model.nm1 == adjoint_workspace.model.nm1 || throw(ArgumentError(
+        "singlet and adjoint workspaces must use the same system size",
+    ))
+    singlet_workspace.heavy_space_mode == adjoint_workspace.heavy_space_mode ||
+        throw(ArgumentError("singlet and adjoint workspaces must use the same projection"))
+    isempty(primary_specs) && throw(ArgumentError("primary_specs cannot be empty"))
+    descendant_state_count >= 1 || throw(ArgumentError(
+        "descendant_state_count must be positive",
+    ))
+    MottJainED.validate(couplings)
+
+    workspaces = Dict(
+        :singlet => singlet_workspace,
+        :adjoint => adjoint_workspace,
+    )
+    required_blocks = Set{Tuple{Symbol,Int}}(((:singlet, 0),))
+    for spec in primary_specs
+        representation_data(spec.representation)
+        spec.ell >= 0 || throw(ArgumentError("primary angular momentum must be non-negative"))
+        spec.rank >= 1 || throw(ArgumentError("primary rank must be positive"))
+        push!(required_blocks, (spec.representation, spec.ell))
+        for target_ell in _vector_target_ells(spec.ell)
+            push!(required_blocks, (spec.representation, target_ell))
+        end
+    end
+    push!(required_blocks, (:singlet, 1))
+
+    hamiltonians = Dict{Tuple{Symbol,Int},SO3Hamiltonian}()
+    for (representation, ell) in sort!(collect(required_blocks))
+        hamiltonians[(representation, ell)] = build_hamiltonian(
+            workspaces[representation], ell, couplings; disp_std,
+        )
+    end
+
+    requested_counts = Dict{Tuple{Symbol,Int},Int}(
+        (Symbol(key[1]), Int(key[2])) => Int(value)
+        for (key, value) in pairs(block_counts)
+    )
+    k2_source_keys = Set(keys(requested_counts))
+    requested_counts[(:singlet, 0)] = max(get(requested_counts, (:singlet, 0), 0), 2)
+    for spec in primary_specs
+        key = (spec.representation, spec.ell)
+        requested_counts[key] = max(get(requested_counts, key, 0), spec.rank)
+    end
+    for key in required_blocks
+        requested_counts[key] = max(
+            get(requested_counts, key, 0), descendant_state_count,
+        )
+    end
+    energies = Dict{Tuple{Symbol,Int},Vector{Float64}}()
+    states = Dict{Tuple{Symbol,Int},Matrix{Float64}}()
+    for (key, count) in requested_counts
+        haskey(hamiltonians, key) || continue
+        count >= 1 || throw(ArgumentError("block_counts must be positive"))
+        block_energies, block_states = solve(
+            hamiltonians[key]; k=count, tol=Float64(eig_tol), ncv,
+            vectors=true, disp_std,
+        )
+        _canonicalize_state_signs!(block_states)
+        energies[key] = block_energies
+        states[key] = block_states
+    end
+
+    candidates = Dict(
+        representation => build_generator_candidates(workspace.model)
+        for (representation, workspace) in workspaces
+    )
+    operator_cache = Dict{Tuple{Symbol,Int,Int},SO3GeneratorOperators}()
+    function operators(representation::Symbol, initial_ell::Int, final_ell::Int)
+        key = (representation, initial_ell, final_ell)
+        return get!(operator_cache, key) do
+            build_generator_operators(
+                hamiltonians[(representation, initial_ell)].space,
+                hamiltonians[(representation, final_ell)].space,
+                candidates[representation]; disp_std,
+            )
+        end
+    end
+
+    vacuum = view(states[(:singlet, 0)], :, 1)
+    vacuum_design = _candidate_action_matrix(
+        vacuum, operators(:singlet, 0, 1),
+    )
+    channels = NamedTuple[]
+    for spec in primary_specs
+        source_key = (spec.representation, spec.ell)
+        source_energy = energies[source_key][spec.rank]
+        source = view(states[source_key], :, spec.rank)
+        weight = inv(2spec.ell + 1)
+        for target_ell in _vector_target_ells(spec.ell)
+            final_hamiltonian = hamiltonians[(spec.representation, target_ell)]
+            operator_set = operators(spec.representation, spec.ell, target_ell)
+            lambda_design = _candidate_action_matrix(source, operator_set)
+            commutator_numerator = _apply_hamiltonian_columns(
+                final_hamiltonian, lambda_design,
+            ) .- source_energy .* lambda_design
+            second_commutator_numerator = _apply_hamiltonian_columns(
+                final_hamiltonian, commutator_numerator,
+            ) .- source_energy .* commutator_numerator
+            target_states = states[(spec.representation, target_ell)]
+            lambda_leakage_design = lambda_design .-
+                target_states * (target_states' * lambda_design)
+            commutator_leakage_numerator = commutator_numerator .-
+                target_states * (target_states' * commutator_numerator)
+            push!(channels, (
+                label=spec.label,
+                representation=spec.representation,
+                source_ell=spec.ell,
+                target_ell=target_ell,
+                source_rank=spec.rank,
+                source_energy=source_energy,
+                weight=weight,
+                lambda_design=lambda_design,
+                commutator_numerator=commutator_numerator,
+                second_commutator_numerator=second_commutator_numerator,
+                lambda_leakage_design=lambda_leakage_design,
+                commutator_leakage_numerator=commutator_leakage_numerator,
+                target_states=target_states,
+                operator_set=operator_set,
+                initial_hamiltonian=hamiltonians[source_key],
+                final_hamiltonian=final_hamiltonian,
+            ))
+        end
+    end
+
+    fit = _fit_primary_annihilating_generator(
+        channels, vacuum_design;
+        factor_bounds, fit_primary_labels, vacuum_weight,
+        dilatation_weight, descendant_weight, gram_rtol,
+    )
+    factor = fit.factor
+    direction = fit.coefficients
+
+    ground_energy = energies[(:singlet, 0)][1]
+    scalar_commutator_coefficients = Float64[]
+    scalar_commutator_targets = Float64[]
+    for spec in primary_specs
+        spec.ell == 0 && spec.label in fit.fit_primary_labels || continue
+        channel = only(filter(
+            row -> row.label == spec.label && row.target_ell == 1,
+            channels,
+        ))
+        lambda = channel.lambda_design * direction
+        raw_commutator = channel.commutator_numerator * direction
+        # For L=0,m=0 and the q=0 Cartesian/spherical component, the square
+        # of the Wigner-Eckart 3j factor is 1/3.  Multiplying
+        # <[Kz,Pz]>=2D by `factor` removes the cylinder scale from both sides.
+        push!(scalar_commutator_coefficients,
+              real(dot(lambda, raw_commutator)) / 3)
+        push!(scalar_commutator_targets,
+              2 * (channel.source_energy - ground_energy))
+    end
+    normalization_denominator = sum(abs2, scalar_commutator_coefficients)
+    normalization_scale2 = normalization_denominator > eps(Float64) ?
+        dot(scalar_commutator_coefficients, scalar_commutator_targets) /
+        normalization_denominator : NaN
+    commutator_normalization_valid = isfinite(normalization_scale2) &&
+                                     normalization_scale2 > 0
+    normalization_scale = commutator_normalization_valid ?
+        sqrt(normalization_scale2) : 1.0
+    coefficients = normalization_scale .* direction
+    scalar_commutator_residuals = commutator_normalization_valid ?
+        normalization_scale2 .* scalar_commutator_coefficients .-
+            scalar_commutator_targets :
+        fill(NaN, length(scalar_commutator_targets))
+    fit = merge(fit, (
+        coefficients=coefficients,
+        direction_coefficients=direction,
+        commutator_normalization_valid=commutator_normalization_valid,
+        commutator_normalization_scale=normalization_scale,
+        scalar_commutator_residuals=scalar_commutator_residuals,
+    ))
+
+    channel_rows = NamedTuple[]
+    primary_rows = NamedTuple[]
+    for spec in primary_specs
+        selected = filter(channel -> channel.label == spec.label, channels)
+        totals = Dict(
+            :lambda => 0.0, :p => 0.0, :k => 0.0,
+            :p_residual => 0.0, :k_residual => 0.0,
+            :lambda_delta => 0.0,
+        )
+        for channel in selected
+            lambda = channel.lambda_design * coefficients
+            d_lambda = channel.commutator_numerator * coefficients ./ factor
+            p_action = (lambda .+ d_lambda) ./ 2
+            k_action = (lambda .- d_lambda) ./ 2
+            delta_p = (
+                channel.final_hamiltonian.operator * p_action .-
+                channel.source_energy .* p_action
+            ) ./ factor
+            delta_k = (
+                channel.final_hamiltonian.operator * k_action .-
+                channel.source_energy .* k_action
+            ) ./ factor
+            p_residual = delta_p .- p_action
+            k_residual = delta_k .+ k_action
+            weight = channel.weight
+            lambda_norm2 = weight * real(dot(lambda, lambda))
+            p_norm2 = weight * real(dot(p_action, p_action))
+            k_norm2 = weight * real(dot(k_action, k_action))
+            p_residual_norm2 = weight * real(dot(p_residual, p_residual))
+            k_residual_norm2 = weight * real(dot(k_residual, k_residual))
+            projected_p = channel.target_states * (channel.target_states' * p_action)
+            p_leakage_norm2 = weight * real(dot(
+                p_action - projected_p, p_action - projected_p,
+            ))
+            lambda_delta = weight * real(dot(lambda, d_lambda))
+            totals[:lambda] += lambda_norm2
+            totals[:p] += p_norm2
+            totals[:k] += k_norm2
+            totals[:p_residual] += p_residual_norm2
+            totals[:k_residual] += k_residual_norm2
+            totals[:p_leakage] = get(totals, :p_leakage, 0.0) + p_leakage_norm2
+            totals[:lambda_delta] += lambda_delta
+            push!(channel_rows, (
+                label=spec.label,
+                representation=spec.representation,
+                source_ell=spec.ell,
+                source_rank=spec.rank,
+                target_ell=channel.target_ell,
+                source_energy=channel.source_energy,
+                lambda_norm2=lambda_norm2,
+                p_norm2=p_norm2,
+                k_norm2=k_norm2,
+                k_fraction=k_norm2 / max(lambda_norm2, eps(Float64)),
+                p_dilatation_residual_norm2=p_residual_norm2,
+                k_dilatation_residual_norm2=k_residual_norm2,
+                p_low_energy_leakage_norm2=p_leakage_norm2,
+            ))
+        end
+        scalar_commutator_lhs = spec.ell == 0 ?
+            (totals[:p] - totals[:k]) / 3 : NaN
+        scalar_commutator_target = spec.ell == 0 ?
+            2 * (energies[(spec.representation, spec.ell)][spec.rank] - ground_energy) /
+                factor : NaN
+        push!(primary_rows, (
+            label=spec.label,
+            representation=spec.representation,
+            ell=spec.ell,
+            rank=spec.rank,
+            energy=energies[(spec.representation, spec.ell)][spec.rank],
+            lambda_norm2=totals[:lambda],
+            p_norm2=totals[:p],
+            k_norm2=totals[:k],
+            k_fraction=totals[:k] / max(totals[:lambda], eps(Float64)),
+            p_dilatation_fraction=totals[:p_residual] /
+                max(totals[:p], eps(Float64)),
+            k_dilatation_fraction=totals[:k_residual] /
+                max(totals[:k], eps(Float64)),
+            p_low_energy_leakage_fraction=totals[:p_leakage] /
+                max(totals[:p], eps(Float64)),
+            lambda_mean_scaled_gap=totals[:lambda_delta] /
+                max(totals[:lambda], eps(Float64)),
+            kp_commutator_lhs=scalar_commutator_lhs,
+            kp_commutator_target=scalar_commutator_target,
+            kp_commutator_fractional_residual=spec.ell == 0 ?
+                (scalar_commutator_lhs - scalar_commutator_target) /
+                    max(abs(scalar_commutator_target), eps(Float64)) : NaN,
+            used_for_fit=spec.label in fit.fit_primary_labels,
+        ))
+    end
+
+    vacuum_norm2 = real(dot(vacuum_design * coefficients, vacuum_design * coefficients))
+    k2_results = Dict{Tuple{Symbol,Int},NamedTuple}()
+    for (source_key, source_states) in states
+        source_key in k2_source_keys || continue
+        representation, source_ell = source_key
+        lambda_gram = zeros(Float64, size(source_states, 2), size(source_states, 2))
+        k_gram = zeros(Float64, size(source_states, 2), size(source_states, 2))
+        for target_ell in _vector_target_ells(source_ell)
+            haskey(hamiltonians, (representation, target_ell)) || continue
+            operator_set = operators(representation, source_ell, target_ell)
+            lambda_map = _operator_action_matrix(
+                source_states, operator_set, coefficients,
+            )
+            k_map = hcat((
+                apply_so3_conformal_generator(
+                    view(source_states, :, column), operator_set, coefficients,
+                    hamiltonians[source_key], hamiltonians[(representation, target_ell)];
+                    factor, generator=:k,
+                )
+                for column in axes(source_states, 2)
+            )...)
+            all(isfinite, lambda_map) || error(
+                "non-finite Lambda action in representation=$representation " *
+                "L=$source_ell->$target_ell",
+            )
+            all(isfinite, k_map) || error(
+                "non-finite K action in representation=$representation " *
+                "L=$source_ell->$target_ell",
+            )
+            multiplet_weight = inv(2source_ell + 1)
+            lambda_gram .+= multiplet_weight .* (lambda_map' * lambda_map)
+            k_gram .+= multiplet_weight .* (k_map' * k_map)
+        end
+        decomposition = eigen(Symmetric(k_gram))
+        mode_lambda_norm2 = [
+            real(dot(view(decomposition.vectors, :, mode),
+                     lambda_gram * view(decomposition.vectors, :, mode)))
+            for mode in axes(decomposition.vectors, 2)
+        ]
+        mode_energy = [
+            sum(abs2.(view(decomposition.vectors, :, mode)) .* energies[source_key])
+            for mode in axes(decomposition.vectors, 2)
+        ]
+        k2_results[source_key] = (
+            eigenvalues=Float64.(decomposition.values),
+            eigenvectors=Matrix{Float64}(decomposition.vectors),
+            lambda_norm2=mode_lambda_norm2,
+            k_fraction=Float64.(decomposition.values) ./
+                max.(mode_lambda_norm2, eps(Float64)),
+            energy_expectation=mode_energy,
+            source_energies=energies[source_key],
+        )
+    end
+
+    return (
+        fit=fit,
+        primary_rows=primary_rows,
+        channel_rows=channel_rows,
+        k2=k2_results,
+        vacuum_norm2=vacuum_norm2,
+        energies=energies,
+        dimensions=Dict(key => hamiltonian.space.dim for (key, hamiltonian) in hamiltonians),
+        heavy_space_mode=singlet_workspace.heavy_space_mode,
+        generator_candidate_names=GENERATOR_CANDIDATE_NAMES,
+    )
+end
+
 """Apply a fitted generator and resolve its normalized weight over target states."""
 function so3_generator_overlaps(
     input::AbstractVector{<:Real},
@@ -899,7 +1525,9 @@ export SO3Model, SO3Workspace, SO3Hamiltonian,
        SO3GeneratorCandidates, SO3GeneratorOperators,
        build_generator_candidates, build_generator_operators,
        fit_so3_generator, apply_so3_generator, so3_generator_overlaps,
-       analyze_scalar_generator, GENERATOR_CANDIDATE_NAMES,
+       apply_so3_conformal_generator, so3_dilatation_residual,
+       analyze_scalar_generator, analyze_so3_conformal_algebra,
+       GENERATOR_CANDIDATE_NAMES, DEFAULT_CONFORMAL_PRIMARY_SPECS,
        score_cft_blocks, CFT_BLOCK_KEYS, CFT_SCORE_TERMS,
        CFT_STABLE_SIX_TERMS, CFT_AUDITED_SEVEN_TERMS, CFT_RELATION_SPECS
 

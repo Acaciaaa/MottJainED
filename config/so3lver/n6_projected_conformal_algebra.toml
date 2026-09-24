@@ -1,0 +1,37 @@
+[run]
+nm = 6
+tol = 1.0e-8
+ncv = 18
+seed = 20260924
+heavy_space_mode = "laughlin13"
+output = "output/so3lver/conformal_algebra/n6_projected_latest_grid_point"
+
+[algebra]
+# These four candidate primaries overdetermine the eight microscopic rank-one
+# coefficients through their complete native-SO(3) target blocks.  Future
+# searches may reserve one or more labels as strict holdouts.
+fit_primaries = ["S", "O", "J", "T"]
+vacuum_weight = 1.0
+dilatation_weight = 1.0
+descendant_weight = 1.0
+descendant_state_count = 6
+factor_lower = 0.005
+factor_upper = 0.250
+gram_rtol = 1.0e-10
+singlet_l0_count = 5
+singlet_l2_count = 4
+adjoint_l0_count = 4
+adjoint_l1_count = 4
+
+# Latest downloaded full-space boundary winner, rewritten in the exact
+# Laughlin-1/3 projected model.  V0 is fixed to zero and its redundant shift
+# is absorbed into mu, as established by the projection identity audit.
+[point]
+Uf = 0.48
+U0 = 4.32
+Uf0 = 1.68
+Vf = 0.0
+Vf0 = 0.3549772487682664
+V0 = 0.0
+t = 0.5
+mu = 0.22881105175318384

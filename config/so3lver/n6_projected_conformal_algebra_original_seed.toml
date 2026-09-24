@@ -1,0 +1,34 @@
+[run]
+nm = 6
+tol = 1.0e-8
+ncv = 18
+seed = 20260924
+heavy_space_mode = "laughlin13"
+output = "output/so3lver/conformal_algebra/n6_projected_original_seed"
+
+[algebra]
+fit_primaries = ["S", "O", "J", "T"]
+vacuum_weight = 1.0
+dilatation_weight = 1.0
+descendant_weight = 1.0
+descendant_state_count = 6
+factor_lower = 0.005
+factor_upper = 0.250
+gram_rtol = 1.0e-10
+singlet_l0_count = 5
+singlet_l2_count = 4
+adjoint_l0_count = 4
+adjoint_l1_count = 4
+
+# Historical retained full-space seed, represented exactly after projection.
+# The old V0=0.525 contribution is absorbed into mu using the verified
+# P V0 P = constant + 0.1768388256576616 P Nlight P identity.
+[point]
+Uf = 0.46
+U0 = 4.14
+Uf0 = 1.834
+Vf = 0.0
+Vf0 = 0.41
+V0 = 0.0
+t = 0.5
+mu = 0.21465468747547234
