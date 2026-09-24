@@ -150,7 +150,12 @@ function linked_uf_grid_values(
     ]
 end
 
-function build_cft_problem(nm1::Int, couplings::Couplings; disp_std::Bool=true)
+function build_cft_problem(
+    nm1::Int,
+    couplings::Couplings;
+    heavy_space_mode::Symbol=:full,
+    disp_std::Bool=true,
+)
     workspaces = Dict{Symbol,SO3Workspace}()
     hamiltonians = Dict{Tuple{Symbol,Int},SO3Hamiltonian}()
     workspace_seconds = Dict{String,Float64}()
@@ -160,7 +165,10 @@ function build_cft_problem(nm1::Int, couplings::Couplings; disp_std::Bool=true)
         started = time()
         model = build_so3_model(; nm1, representation)
         workspace = build_workspace(
-            model; heavy_space=shared_heavy_space, disp_std,
+            model;
+            heavy_space=shared_heavy_space,
+            heavy_space_mode,
+            disp_std,
         )
         shared_heavy_space = workspace.heavy_space
         workspaces[representation] = workspace
@@ -263,34 +271,6 @@ function track_reference_states(
     return (passed=all(row -> row.passed, rows), rows=rows)
 end
 
-function _conformal_state(label::Symbol, name::String, level, l2::Int, c2::Int, rank::Int)
-    member = first(level.members)
-    member.vector === nothing && error("generator audit requires retained eigenvectors")
-    return ConformalState(
-        label=label, name=name, l2=l2, c2=c2, rank=rank,
-        state=member.vector, basis=member.basis, energy=member.energy,
-    )
-end
-
-function _low_scalar_states(
-    catalog, l2::Int, maximum_count::Int, minimum_count::Int, prefix::String,
-)
-    levels = get(catalog, (l2, 0), nothing)
-    isnothing(levels) && error("generator audit found no (L2,C2)=($l2,0) levels")
-    length(levels) >= minimum_count || error(
-        "generator audit needs at least $minimum_count physical " *
-        "(L2,C2)=($l2,0) levels; " *
-        "found $(length(levels))",
-    )
-    count = min(maximum_count, length(levels))
-    selected = [
-        _conformal_state(Symbol("$(prefix)$(rank)"), "$(prefix) rank $rank",
-                         levels[rank], l2, 0, rank)
-        for rank in 1:count
-    ]
-    return (states=selected, available_count=length(levels))
-end
-
 function assess_scalar_generator_overlaps(
     l0_values::AbstractVector{<:Real},
     l2_values::AbstractVector{<:Real};
@@ -351,11 +331,11 @@ function assess_scalar_generator_overlaps(
 end
 
 """
-Use the conventional Fock-basis generator once at the N=6 anchor to test the
-provisional scalar ranks.  The fitted generator uses only S -> dS.  The gate
-then asks whether boxS (scalar L=0 rank 3) and ddS (scalar L=2 rank 2) are the
-largest non-parent components and whether their expected two-state subspaces
-capture the generated vectors.
+Use the native SO(3)lver rank-one tensor generator at the N=6 anchor to test
+the provisional scalar ranks.  The fitted generator uses only S -> dS.  The
+gate then asks whether boxS (scalar L=0 rank 3) and ddS (scalar L=2 rank 2) are
+the largest non-parent components and whether their expected two-state
+subspaces capture the generated vectors.
 """
 function audit_scalar_generator(
     nm1::Int,
@@ -375,51 +355,41 @@ function audit_scalar_generator(
     low_level_count >= minimum_l2_level_count >= 3 || throw(ArgumentError(
         "require low_level_count >= minimum_l2_level_count >= 3",
     ))
-    model = build_model(; nm1)
-    settings = SolverSettings(
-        k=k, eig_tol=eig_tol, warm_start=false,
-        ncv_extra=max(12, k),
+    k >= low_level_count || throw(ArgumentError(
+        "k must be at least low_level_count",
+    ))
+    model = build_so3_model(; nm1, representation=:singlet)
+    workspace = build_workspace(model; disp_std=false)
+    result = analyze_scalar_generator(
+        workspace, couplings;
+        l0_count=low_level_count,
+        l2_count=low_level_count,
+        eig_tol,
+        ncv=max(18, 2 * low_level_count),
+        disp_std=false,
     )
-    cache = prepare_spectrum(model, couplings, settings)
-    states = solve_spectrum(cache, couplings.mu; keep_vectors=true)
-    catalog, _ = level_catalog(states)
-    l0_selection = _low_scalar_states(
-        catalog, 0, low_level_count, minimum_l0_level_count, "scalarL0_",
+    l0_values = Float64.(result.l0_overlap.values)
+    l2_values = Float64.(result.l2_overlap.values)
+    length(l0_values) >= minimum_l0_level_count || error(
+        "generator audit found only $(length(l0_values)) scalar L=0 levels",
     )
-    l1_selection = _low_scalar_states(catalog, 2, 1, 1, "scalarL1_")
-    l2_selection = _low_scalar_states(
-        catalog, 6, low_level_count, minimum_l2_level_count, "scalarL2_",
+    length(l2_values) >= minimum_l2_level_count || error(
+        "generator audit found only $(length(l2_values)) scalar L=2 levels",
     )
-    l0 = l0_selection.states
-    l1 = l1_selection.states
-    l2 = l2_selection.states
-
-    # Operational labels used by the established tower convention.
-    s = l0[2]
-    s.label = :S
-    ds = l1[1]
-    ds.label = :dS
-    candidates = generator_candidates(model)
-    fit = fit_generator(s, ds, candidates)
-    l0_overlap = generator_overlap(
-        ds, l0, fit.terms; target_l=0, l2_terms=model.l2,
-    )
-    l2_overlap = generator_overlap(
-        ds, l2, fit.terms; target_l=2, l2_terms=model.l2,
-    )
-
-    l0_values = [Float64(l0_overlap.overlaps[state.label]) for state in l0]
-    l2_values = [Float64(l2_overlap.overlaps[state.label]) for state in l2]
     assessment = assess_scalar_generator_overlaps(
         l0_values, l2_values;
         minimum_expected_subspace_overlap,
         minimum_expected_subspace_fraction,
     )
+    fit = result.fit
     passed = fit.fidelity >= minimum_fit_fidelity && assessment.passed
     return (
         passed=passed,
         fit_fidelity=Float64(fit.fidelity),
         numerical_rank=fit.numerical_rank,
+        candidate_names=collect(fit.names),
+        coefficients=Float64.(fit.coefficients),
+        singular_values=Float64.(fit.singular_values),
         l0_overlaps=l0_values,
         l2_overlaps=l2_values,
         l0_expected_subspace_overlap=assessment.l0_expected_subspace_overlap,
@@ -439,10 +409,10 @@ function audit_scalar_generator(
         low_level_count=low_level_count,
         minimum_l0_level_count=minimum_l0_level_count,
         minimum_l2_level_count=minimum_l2_level_count,
-        l0_level_count=length(l0),
-        l2_level_count=length(l2),
-        l0_available_level_count=l0_selection.available_count,
-        l2_available_level_count=l2_selection.available_count,
+        l0_level_count=length(l0_values),
+        l2_level_count=length(l2_values),
+        l0_available_level_count=result.dimensions.l0,
+        l2_available_level_count=result.dimensions.l2,
     )
 end
 

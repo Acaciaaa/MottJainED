@@ -88,8 +88,12 @@ base = couplings(options)
 mus = option_list(Float64, options, "mus", string(base.mu))
 ells = option_list(Int, options, "ells", "0,1,2")
 representations = Symbol.(lowercase.(option_list(String, options, "representations", "singlet,adjoint")))
+heavy_space_mode = Symbol(lowercase(option(options, "heavy-space", "full")))
 all(rep -> rep in (:singlet, :adjoint), representations) || throw(ArgumentError(
     "representations must contain only singlet and/or adjoint",
+))
+heavy_space_mode in HEAVY_SPACE_MODES || throw(ArgumentError(
+    "heavy-space must be full or laughlin13",
 ))
 all(ell -> ell >= 0, ells) || throw(ArgumentError("ells must be non-negative"))
 k > 0 || throw(ArgumentError("k must be positive"))
@@ -97,7 +101,8 @@ isempty(mus) && throw(ArgumentError("mus must not be empty"))
 Random.seed!(parse(Int, option(options, "seed", 20260919)))
 
 println("SO(3)lver CFT workload: N=$nm representations=$(join(representations, ',')) " *
-        "L=$(join(ells, ',')) k=$k points=$(length(mus))")
+        "L=$(join(ells, ',')) k=$k points=$(length(mus)) " *
+        "heavy_space=$heavy_space_mode")
 println("Julia $(VERSION), threads=$(Threads.nthreads()), FuzzifiED $(Base.pkgversion(FuzzifiED))")
 flush(stdout)
 
@@ -115,7 +120,10 @@ for representation in representations
     started = time()
     model = build_so3_model(nm1=nm, representation=representation)
     workspace = build_workspace(
-        model; heavy_space=shared_heavy_space[], disp_std=true,
+        model;
+        heavy_space=shared_heavy_space[],
+        heavy_space_mode,
+        disp_std=true,
     )
     shared_heavy_space[] = workspace.heavy_space
     elapsed = time() - started
@@ -182,10 +190,15 @@ if run_solver
             "blocks" => block_results,
         )
         if all(key -> haskey(block_energies, key), CFT_BLOCK_KEYS)
-            score = score_cft_blocks(block_energies)
-            point["score"] = score_dict(score)
-            println("point=$point_index q=$(score.q) factor=$(score.factor) " *
-                    "delta_s=$(score.delta_s) delta_o=$(score.delta_o)")
+            five = score_cft_blocks(block_energies)
+            six = score_cft_blocks(block_energies; terms=CFT_STABLE_SIX_TERMS)
+            seven = score_cft_blocks(block_energies; terms=CFT_AUDITED_SEVEN_TERMS)
+            point["score"] = score_dict(five)
+            point["stable_six_score"] = score_dict(six)
+            point["audited_seven_score"] = score_dict(seven)
+            println("point=$point_index q5=$(five.q) q6=$(six.q) q7=$(seven.q) " *
+                    "factor=$(six.factor) delta_s=$(six.delta_s) " *
+                    "delta_o=$(six.delta_o)")
             flush(stdout)
         end
         push!(points, point)
@@ -208,6 +221,7 @@ result = Dict{String,Any}(
     "mus" => mus,
     "ells" => ells,
     "representations" => String.(representations),
+    "heavy_space_mode" => String(heavy_space_mode),
     "workspace_seconds" => workspace_seconds,
     "operator_seconds" => operator_seconds,
     "dimensions" => dimensions,

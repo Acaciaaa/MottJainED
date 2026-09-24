@@ -1,0 +1,20 @@
+[run]
+nm = 6
+l0_count = 6
+l2_count = 6
+tol = 1.0e-9
+ncv = 18
+seed = 20260921
+output = "output/so3lver/generator/n6_job633223_uf0_minus_native"
+
+# Lowest audited neighbor recovered from job 633223.  This profile is explicit
+# so the generator analysis never falls back to config/my_run.toml.
+[point]
+Uf = 0.46
+U0 = 4.14
+Uf0 = 1.6605860385658133
+Vf = 0.0
+Vf0 = 0.3449772487682664
+V0 = 0.6208991002533251
+t = 0.5
+mu = 0.10948169732213274

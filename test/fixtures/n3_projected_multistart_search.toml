@@ -1,0 +1,80 @@
+[run]
+nm = 3
+k = 3
+tol = 1.0e-8
+ncv = 9
+seed = 20260924
+heavy_space_mode = "laughlin13"
+output = "output/so3lver/test/n3_projected_multistart_search"
+
+[base]
+Uf = 0.48
+U0 = 4.32
+Uf0 = 1.68
+Vf = 0.0
+Vf0 = 0.3549772487682664
+V0 = 0.0
+t = 0.5
+mu = 0.22881105175318384
+
+[score]
+terms = ["ds_s", "dds_ds", "j", "curlj", "dj_rank1", "t_rank1"]
+worst_residual_weight = 0.25
+minimum_overlap = 0.0
+penalty = 1000.0
+maximum_q5_ratio = 100.0
+
+[mu]
+lower = 0.20
+upper = 0.25
+grid_count = 3
+refine_basins = 1
+refine_iterations = 2
+absolute_tolerance = 1.0e-4
+boundary_tolerance = 0.001
+
+[outer]
+parameters = ["Uf", "Uf0", "Vf0"]
+u0_over_uf = 9.0
+initial_samples = 2
+local_starts = 2
+local_iterations = 2
+simplex_step = 0.10
+maximum_rounds = 1
+expansion_factor = 1.5
+boundary_fraction = 0.10
+minimum_start_distance = 0.10
+top_candidate_count = 4
+consensus_objective_tolerance = 100.0
+
+[outer.initial_half_widths]
+Uf = 0.005
+Uf0 = 0.01
+Vf0 = 0.005
+
+[outer.hard_bounds]
+Uf = [0.45, 0.51]
+Uf0 = [1.60, 1.76]
+Vf0 = [0.31, 0.40]
+
+[outer.consensus_parameter_tolerances]
+Uf = 0.10
+Uf0 = 0.20
+Vf0 = 0.10
+
+[continuation]
+maximum_steps = 20
+
+[continuation.steps]
+Uf = 0.01
+Uf0 = 0.02
+Vf0 = 0.01
+mu = 0.01
+
+[robustness]
+objective_tolerance = 100.0
+
+[robustness.steps]
+Uf = 0.001
+Uf0 = 0.002
+Vf0 = 0.001

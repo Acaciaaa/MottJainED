@@ -115,6 +115,133 @@ end
           reference_energies(retuned_catalog, 0, 0) atol=2e-11
 end
 
+@testset "Laughlin-1/3 heavy-space projection" begin
+    couplings = Couplings(
+        Uf=0.37, Uf0=-0.21, U0=0.83,
+        Vf=0.19, Vf0=-0.17, V0=0.11,
+        t=0.29, mu=-0.07,
+    )
+    model = build_so3_model(nm1=3, representation=:singlet)
+    @test laughlin13_root_counts(model) == [1, 1, 2, 1]
+    @test_throws ArgumentError build_workspace(
+        model; heavy_space_mode=:unknown, disp_std=false,
+    )
+    @test_throws ArgumentError build_workspace(
+        model; heavy_space_mode=:laughlin13,
+        nst_max_heavy=ones(Int, size(model.sec_heavy, 2)), disp_std=false,
+    )
+
+    full_workspace = build_workspace(model; disp_std=false)
+    projected_workspace = build_workspace(
+        model; heavy_space_mode=:laughlin13, disp_std=false,
+    )
+    @test projected_workspace.heavy_space_mode == :laughlin13
+    @test size.(projected_workspace.heavy_space.sts, 2) ==
+          laughlin13_root_counts(model)
+
+    for ell in 0:2
+        full_hamiltonian = build_hamiltonian(
+            full_workspace, ell, couplings; disp_std=false,
+        )
+        projected_hamiltonian = build_hamiltonian(
+            projected_workspace, ell, couplings; disp_std=false,
+        )
+        full_v1 = Matrix(
+            build_heavy_v1_operator(full_hamiltonian; disp_std=false);
+            disp_std=false,
+        )
+        projected_v1 = Matrix(
+            build_heavy_v1_operator(projected_hamiltonian; disp_std=false);
+            disp_std=false,
+        )
+        @test opnorm(projected_v1) < 2e-12
+
+        # This is an independent explicit projection: find ker(V1) inside the
+        # unprojected composite block, form P H P there, and compare its whole
+        # spectrum with the Hamiltonian assembled directly from Jack states.
+        v1_decomposition = eigen(Symmetric(full_v1))
+        zero_indices = findall(abs.(v1_decomposition.values) .< 2e-10)
+        @test length(zero_indices) == sector_dimension(projected_hamiltonian)
+        projector_basis = v1_decomposition.vectors[:, zero_indices]
+        full_matrix = Matrix(full_hamiltonian.operator; disp_std=false)
+        explicit_php = Symmetric(projector_basis' * full_matrix * projector_basis)
+        projected_matrix = Symmetric(Matrix(
+            projected_hamiltonian.operator; disp_std=false,
+        ))
+        @test eigvals(explicit_php) ≈ eigvals(projected_matrix) atol=2e-10
+
+        # The low-energy spectrum of H + lambda*V1 must approach P H P when
+        # the parent-Hamiltonian penalty is increased.
+        projected_gaps = eigvals(projected_matrix)
+        projected_gaps .-= first(projected_gaps)
+        convergence_errors = Float64[]
+        for penalty in (20.0, 200.0, 2000.0)
+            finite_v1 = eigvals(Symmetric(full_matrix + penalty * full_v1))[
+                1:length(projected_gaps)
+            ]
+            finite_v1 .-= first(finite_v1)
+            push!(convergence_errors, maximum(abs.(finite_v1 - projected_gaps)))
+        end
+        if convergence_errors[1] > 1e-10
+            @test convergence_errors[3] < convergence_errors[2] < convergence_errors[1]
+        else
+            # Some small blocks are invariant under H already, so every
+            # finite penalty agrees with P H P to floating-point precision.
+            @test maximum(convergence_errors) < 1e-10
+        end
+        @test convergence_errors[3] < 2e-3
+    end
+
+    # Inside the exact V1 kernel, the old V0 component has no remaining
+    # pseudopotential action.  It must therefore be only a common energy shift
+    # plus a chemical-potential shift, so V0 is no longer a physical axis.
+    redundancy_hamiltonian = build_hamiltonian(
+        projected_workspace, 0, isolated_component(:V0); disp_std=false,
+    )
+    v0_matrix = Matrix(redundancy_hamiltonian.operator; disp_std=false)
+    retune!(redundancy_hamiltonian, isolated_component(:mu))
+    mu_matrix = Matrix(redundancy_hamiltonian.operator; disp_std=false)
+    identity_matrix = Matrix{Float64}(I, size(v0_matrix)...)
+    redundancy_coefficients = hcat(
+        vec(identity_matrix), vec(mu_matrix),
+    ) \ vec(v0_matrix)
+    redundancy_residual = norm(
+        v0_matrix - redundancy_coefficients[1] * identity_matrix -
+        redundancy_coefficients[2] * mu_matrix,
+    ) / norm(v0_matrix)
+    @test redundancy_residual < 2e-12
+end
+
+@testset "Native SO(3)lver conformal generator" begin
+    # These values were independently produced by the historical FuzzifiED
+    # 1.2.1 full-Fock implementation.  The native calculation uses only the
+    # eight SU(3)-singlet tensors but must span exactly the same generated
+    # state and descendant projections.
+    couplings = Couplings(
+        Uf=0.46, U0=4.14, Uf0=1.6605860385658133, Vf=0.0,
+        Vf0=0.3449772487682664, V0=0.6208991002533251,
+        t=0.5, mu=0.10948169732213274,
+    )
+    model = build_so3_model(nm1=4, representation=:singlet)
+    workspace = build_workspace(model; disp_std=false)
+    result = analyze_scalar_generator(
+        workspace, couplings;
+        l0_count=4, l2_count=3, eig_tol=1.0e-10, disp_std=false,
+    )
+
+    @test result.fit.names == GENERATOR_CANDIDATE_NAMES
+    @test result.fit.numerical_rank == 8
+    @test result.fit.fidelity ≈ 0.999443221677711 atol=2e-12
+    @test result.l0_overlap.values[2:3] ≈
+          [0.625725483601669, 0.338092599947906] atol=2e-11
+    @test sum(result.l0_overlap.values[2:3]) ≈
+          0.963818083549575 atol=2e-11
+    @test result.l2_overlap.values[1:2] ≈
+          [0.201414560552697, 0.702469374066752] atol=2e-11
+    @test sum(result.l2_overlap.values[1:2]) ≈
+          0.903883934619449 atol=2e-11
+end
+
 @testset "SO(3)lver physical-block CFT score" begin
     blocks = Dict{Tuple{Symbol,Int},Vector{Float64}}(
         (:singlet, 0) => [0.0, 1.2, 3.2],

@@ -42,7 +42,8 @@ function usage()
     println("""
 Usage:
   julia --project=. scripts/so3lver_ed.jl benchmark \\
-      --nm=7 --representation=adjoint --ell=2 --k=4 [--solve=false]
+      --nm=7 --representation=adjoint --ell=2 --k=4 \
+      [--heavy-space=full|laughlin13] [--solve=false]
 
 Optional Hamiltonian overrides use --Uf=..., --Uf0=..., --U0=..., --Vf=...,
 --Vf0=..., --V0=..., --t=..., and --mu=....  Results are written below
@@ -61,16 +62,21 @@ ell = parse(Int, option(options, "ell", 2))
 k = parse(Int, option(options, "k", 4))
 tol = parse(Float64, option(options, "tol", 1e-8))
 run_solver = option_bool(options, "solve", true)
+heavy_space_mode = Symbol(lowercase(option(options, "heavy-space", "full")))
+heavy_space_mode in HEAVY_SPACE_MODES || throw(ArgumentError(
+    "heavy-space must be full or laughlin13",
+))
 params = couplings(options)
 Random.seed!(parse(Int, option(options, "seed", 20260917)))
 
-println("SO(3)lver benchmark: N=$nm representation=$representation L=$ell k=$k")
+println("SO(3)lver benchmark: N=$nm representation=$representation L=$ell " *
+        "k=$k heavy_space=$heavy_space_mode")
 println("Julia $(VERSION), threads=$(Threads.nthreads()), FuzzifiED $(Base.pkgversion(FuzzifiED))")
 flush(stdout)
 
 started = time()
 model = build_so3_model(nm1=nm, representation=representation)
-workspace = build_workspace(model; disp_std=true)
+workspace = build_workspace(model; heavy_space_mode, disp_std=true)
 workspace_elapsed = time() - started
 println("workspace_seconds=$workspace_elapsed")
 flush(stdout)
@@ -119,6 +125,7 @@ result = Dict{String,Any}(
     "ell" => ell,
     "k" => k,
     "tol" => tol,
+    "heavy_space_mode" => String(heavy_space_mode),
     "solved" => run_solver,
     "sector_dimension" => dimension,
     "light_segment_dimension" => workspace.light_space.ptr_st[end][end] - 1,

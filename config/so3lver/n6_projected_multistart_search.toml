@@ -1,0 +1,95 @@
+[run]
+nm = 6
+k = 6
+tol = 1.0e-8
+ncv = 18
+seed = 20260924
+heavy_space_mode = "laughlin13"
+output = "output/so3lver/parameter_search/n6_projected_multistart_01"
+
+# The latest full-space boundary winner, rewritten exactly inside the
+# projected model with V0=0.  It is only the tracking/reference anchor; every
+# outer point below receives a fresh, independent mu profile.
+[base]
+Uf = 0.48
+U0 = 4.32
+Uf0 = 1.68
+Vf = 0.0
+Vf0 = 0.3549772487682664
+V0 = 0.0
+t = 0.5
+mu = 0.22881105175318384
+
+[score]
+terms = ["ds_s", "dds_ds", "j", "curlj", "dj_rank1", "t_rank1"]
+worst_residual_weight = 0.25
+minimum_overlap = 0.70
+penalty = 1000.0
+maximum_q5_ratio = 1.05
+
+# V0 has been removed algebraically, so this is the projected-model chemical
+# potential.  The spacing is fine enough to identify each smooth basin before
+# Brent refinement, while the interval is substantially wider than the local
+# scan already performed around 0.228811.
+[mu]
+lower = 0.14
+upper = 0.32
+grid_count = 19
+refine_basins = 9
+refine_iterations = 14
+absolute_tolerance = 5.0e-6
+boundary_tolerance = 0.001
+
+[outer]
+parameters = ["Uf", "Uf0", "Vf0"]
+u0_over_uf = 9.0
+initial_samples = 30
+local_starts = 6
+local_iterations = 28
+simplex_step = 0.20
+maximum_rounds = 2
+expansion_factor = 1.5
+boundary_fraction = 0.10
+minimum_start_distance = 0.30
+top_candidate_count = 20
+consensus_objective_tolerance = 0.002
+
+# The first round spans Uf=0.40--0.56, Uf0=1.28--2.08, and
+# Vf0=0.175--0.535.  This deliberately brackets the old boundary winner rather
+# than assuming the projected optimum remains in its former narrow box.
+[outer.initial_half_widths]
+Uf = 0.08
+Uf0 = 0.40
+Vf0 = 0.18
+
+# These are safety limits for at most one automatic trust-region expansion,
+# not the first-round search box.
+[outer.hard_bounds]
+Uf = [0.32, 0.72]
+Uf0 = [0.80, 2.80]
+Vf0 = [0.05, 0.90]
+
+# "Same basin" is deliberately stricter than the initial box but comparable
+# to the final finite-difference audit scale.  The result records every start
+# separately and is conclusive only if all final-round starts agree.
+[outer.consensus_parameter_tolerances]
+Uf = 0.015
+Uf0 = 0.03
+Vf0 = 0.015
+
+[continuation]
+maximum_steps = 30
+
+[continuation.steps]
+Uf = 0.02
+Uf0 = 0.05
+Vf0 = 0.025
+mu = 0.005
+
+[robustness]
+objective_tolerance = 0.001
+
+[robustness.steps]
+Uf = 0.01
+Uf0 = 0.02
+Vf0 = 0.01
