@@ -2,9 +2,7 @@
 #SBATCH --job-name=so3-n6-conf
 #SBATCH --nodes=1
 #SBATCH --ntasks-per-node=1
-#SBATCH --cpus-per-task=8
-#SBATCH --mem=16G
-#SBATCH --time=24:00:00
+#SBATCH --cpus-per-task=1
 #SBATCH --partition=sdicnormal
 #SBATCH --output=slurm-logs/so3-n6-conf-%j.out
 
@@ -12,7 +10,7 @@ set -euo pipefail
 project_dir="${SLURM_SUBMIT_DIR:-$(pwd)}"
 allocated_cpus="${SLURM_CPUS_PER_TASK:-1}"
 export JULIA_NUM_THREADS="$allocated_cpus"
-export OMP_NUM_THREADS="$allocated_cpus"
+export OMP_NUM_THREADS=1
 export OPENBLAS_NUM_THREADS=1
 export MKL_NUM_THREADS=1
 cd "$project_dir"

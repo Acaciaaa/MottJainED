@@ -175,6 +175,13 @@ Every expensive point is appended to a source-signed checkpoint; resubmitting
 the same Slurm file resumes the deterministic search instead of recomputing
 finished points.
 
+The Slurm entry uses one Julia thread and leaves memory and wall time to the
+`sdicnormal` defaults.  The projected N=6 benchmark showed no wall-time gain
+from four threads over one, while the local conformal pilot took roughly
+46--69 seconds per point.  One CPU receives about 7.8 GiB by the current
+partition policy, comfortably above the measured roughly 2 GiB projected
+workspace peak; requesting idle CPUs only for memory is therefore unnecessary.
+
 Selection and ranking use only the `S/O/J` conformal-algebra objective.  The
 final candidate is accepted only after a cold eigensolver recheck, multistart
 basin agreement, coordinate-neighbor tests, the state-identity/factor gates,
@@ -191,7 +198,7 @@ search or acceptance decision.  The main server outputs are
 For a direct interactive run, use
 
 ```bash
-julia --threads=8 --project=. scripts/so3lver_conformal_optimize.jl \
+julia --threads=1 --project=. scripts/so3lver_conformal_optimize.jl \
   --config=config/so3lver/n6_projected_conformal_optimization.toml
 ```
 
