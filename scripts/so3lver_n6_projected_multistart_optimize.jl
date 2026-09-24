@@ -93,7 +93,15 @@ k = Int(run_config["k"])
 k >= 3 || error("the stable six-term score needs at least three levels per block")
 tol = Float64(run_config["tol"])
 ncv = Int(run_config["ncv"])
-seed = Int(run_config["seed"])
+base_seed = Int(run_config["seed"])
+worker_index = parse(Int, get(options, "worker-index", "0"))
+parallel_workers = parse(Int, get(options, "parallel-workers", "1"))
+worker_index >= 0 || error("worker-index must be nonnegative")
+parallel_workers >= 1 || error("parallel-workers must be positive")
+worker_index <= parallel_workers || error(
+    "worker-index cannot exceed parallel-workers",
+)
+seed = base_seed + max(worker_index - 1, 0)
 heavy_space_mode = Symbol(lowercase(String(run_config["heavy_space_mode"])))
 heavy_space_mode == :laughlin13 || error(
     "the projected search requires run.heavy_space_mode = \"laughlin13\"",
@@ -133,8 +141,14 @@ isfinite(u0_over_uf) && u0_over_uf > 0 || error(
 isapprox(base.U0, u0_over_uf * base.Uf; atol=1e-12, rtol=0) || error(
     "the projected anchor must obey U0 = outer.u0_over_uf * Uf",
 )
-initial_samples = Int(outer_config["initial_samples"])
-local_starts = Int(outer_config["local_starts"])
+initial_samples = parse(Int, get(
+    options, "initial-samples", string(Int(outer_config["initial_samples"])),
+))
+local_starts = parse(Int, get(
+    options, "local-starts", string(Int(outer_config["local_starts"])),
+))
+initial_samples >= 1 || error("initial-samples must be positive")
+local_starts >= 1 || error("local-starts must be positive")
 local_iterations = Int(outer_config["local_iterations"])
 simplex_step = Float64(outer_config["simplex_step"])
 maximum_rounds = Int(outer_config["maximum_rounds"])
@@ -173,6 +187,18 @@ anchor_values = Float64[getfield(base, parameter) for parameter in outer_paramet
 all((hard_lower .<= anchor_values) .& (anchor_values .<= hard_upper)) || error(
     "anchor outer parameters must lie inside hard bounds",
 )
+forced_start_values = if haskey(options, "forced-start")
+    parsed_start = parse.(Float64, split(options["forced-start"], ','))
+    length(parsed_start) == length(outer_parameters) || error(
+        "forced-start must contain Uf,Uf0,Vf0",
+    )
+    all((hard_lower .<= parsed_start) .& (parsed_start .<= hard_upper)) || error(
+        "forced-start must lie inside the hard parameter bounds",
+    )
+    parsed_start
+else
+    nothing
+end
 
 continuation_steps_config = continuation_config["steps"]
 continuation_steps = Dict(
@@ -206,6 +232,9 @@ signature = MottJainED.stable_id(
     String.(terms), String.(outer_parameters), anchor_values,
     hard_lower, hard_upper, initial_half_widths,
     mu_lower, mu_upper, mu_grid_count, mu_refine_basins,
+    worker_index, parallel_workers, initial_samples, local_starts,
+    isnothing(forced_start_values) ? Float64[] : forced_start_values,
+    local_iterations, maximum_rounds, expansion_factor, boundary_fraction,
     sha256_file(config_path), sha256_file(so3_path), sha256_file(search_path),
     sha256_file(@__FILE__),
 )
@@ -238,6 +267,11 @@ end
 println("N=$nm Laughlin-1/3 projected multi-start SO(3)lver search")
 println("outer_parameters=$(join(outer_parameters, ',')); mu is fully reprofiled")
 println("fixed V0=0; linked U0=$(u0_over_uf)*Uf")
+println("worker_index=$worker_index parallel_workers=$parallel_workers " *
+        "seed=$seed initial_samples=$initial_samples local_starts=$local_starts")
+!isnothing(forced_start_values) && println(
+    "forced_first_round_start=$(join(forced_start_values, ','))",
+)
 println("output=$output")
 println("Julia $(VERSION), threads=$(Threads.nthreads()), FuzzifiED $(Base.pkgversion(FuzzifiED))")
 flush(stdout)
@@ -630,6 +664,17 @@ for round_index in 1:maximum_rounds
 
     candidates = Any[]
     push!(candidates, profile_mu(region_center; source="round_$(round_index)_center"))
+    forced_profile = nothing
+    if round_index == 1 && !isnothing(forced_start_values)
+        all((region_lower .<= forced_start_values) .&
+            (forced_start_values .<= region_upper)) || error(
+            "forced-start must lie inside the first-round search box",
+        )
+        forced_profile = profile_mu(
+            forced_start_values; source="round_$(round_index)_forced_start",
+        )
+        push!(candidates, forced_profile)
+    end
     samples = latin_hypercube_points(
         initial_samples, region_lower, region_upper, rng,
     )
@@ -644,7 +689,12 @@ for round_index in 1:maximum_rounds
             (profile.values .<= region_upper)) && push!(candidates, profile)
     end
 
-    starts = diverse_starts(candidates, local_starts, region_lower, region_upper)
+    starts = if !isnothing(forced_profile) && forced_profile.valid &&
+                isfinite(forced_profile.objective)
+        Any[forced_profile]
+    else
+        diverse_starts(candidates, local_starts, region_lower, region_upper)
+    end
     isempty(starts) && error("round $round_index produced no valid nested-mu start")
     for (start_index, start) in enumerate(starts)
         search_start = (start.values .- region_center) ./ region_half_widths
@@ -832,6 +882,9 @@ best_dict = Dict{String,Any}(
     "accepted" => accepted,
     "signature" => signature,
     "nm1" => nm,
+    "worker_index" => worker_index,
+    "parallel_workers" => parallel_workers,
+    "seed" => seed,
     "heavy_space_mode" => String(heavy_space_mode),
     "u0_over_uf" => u0_over_uf,
     "objective" => best.objective,
