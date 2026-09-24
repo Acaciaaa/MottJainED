@@ -259,6 +259,9 @@ end
         heavy_space_mode=:laughlin13,
         disp_std=false,
     )
+    prepared_problem = build_so3_conformal_problem(
+        singlet_workspace, adjoint_workspace, couplings; disp_std=false,
+    )
     result = analyze_so3_conformal_algebra(
         singlet_workspace, adjoint_workspace, couplings;
         block_counts=Dict(
@@ -270,6 +273,7 @@ end
         factor_bounds=(0.005, 0.2),
         eig_tol=1.0e-9,
         ncv=12,
+        prepared_problem,
         disp_std=false,
     )
 
@@ -298,6 +302,21 @@ end
     @test haskey(result.dimensions, (:adjoint, 3))
     @test !haskey(result.energies, (:singlet, 4))
     @test !haskey(result.energies, (:adjoint, 3))
+    @test !isempty(prepared_problem.operator_cache)
+    objective = score_so3_conformal_algebra(
+        result; labels=[:S, :O, :J], worst_weight=0.2,
+    )
+    @test isfinite(objective.objective) && objective.objective >= 0
+    @test objective.labels == [:J, :O, :S]
+    @test Set(getproperty.(objective.rows, :term)) ==
+          Set(CONFORMAL_OBJECTIVE_TERMS)
+    holdout = score_so3_conformal_algebra(
+        result; labels=[:T], worst_weight=0.0,
+    )
+    @test holdout.labels == [:T]
+    @test_throws ArgumentError score_so3_conformal_algebra(
+        result; labels=[:missing],
+    )
 
     # The full magnetic-substate reconstruction must agree with the simpler
     # scalar reduced-matrix-element identity used for generator normalization.

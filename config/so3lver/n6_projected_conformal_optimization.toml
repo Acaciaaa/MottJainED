@@ -1,0 +1,67 @@
+[run]
+nm = 6
+tol = 1.0e-8
+ncv = 18
+seed = 20260924
+heavy_space_mode = "laughlin13"
+output = "output/so3lver/conformal_optimization/n6_local_01"
+
+[base]
+Uf = 0.48
+U0 = 4.32
+Uf0 = 1.68
+Vf = 0.0
+Vf0 = 0.3549772487682664
+V0 = 0.0
+t = 0.5
+mu = 0.22881105175318384
+
+[algebra]
+# S/O/J determine the microscopic generator and the Hamiltonian objective.
+# T is never seen by either fit and is a strict spinning holdout.
+fit_primaries = ["S", "O", "J"]
+training_primaries = ["S", "O", "J"]
+holdout_primaries = ["T"]
+factor_lower = 0.005
+factor_upper = 0.250
+vacuum_weight = 1.0
+dilatation_weight = 1.0
+descendant_weight = 1.0
+descendant_state_count = 6
+worst_weight = 0.25
+singlet_l0_count = 5
+singlet_l2_count = 4
+adjoint_l0_count = 4
+adjoint_l1_count = 4
+
+[algebra.weights]
+primary_k = 1.0
+dilatation = 1.0
+mixed = 1.0
+p_commutator = 1.0
+k_commutator = 1.0
+vacuum = 1.0
+
+[search]
+# muc is an ordinary optimization coordinate, not selected afterward by the
+# old integer-spectrum locator.  U0 remains linked to Uf, while V0 is removed
+# by the exact projected-space identity.
+parameters = ["Uf", "Uf0", "Vf0", "mu"]
+u0_over_uf = 9.0
+initial_samples = 8
+local_iterations = 14
+simplex_step = 0.16
+minimum_identity_overlap = 0.70
+penalty = 1000.0
+
+[search.initial_half_widths]
+Uf = 0.04
+Uf0 = 0.20
+Vf0 = 0.09
+mu = 0.045
+
+[search.bounds]
+Uf = [0.40, 0.56]
+Uf0 = [1.28, 2.08]
+Vf0 = [0.17, 0.54]
+mu = [0.14, 0.32]

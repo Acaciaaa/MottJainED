@@ -1370,6 +1370,91 @@ function _default_conformal_block_counts(primary_specs)
     return counts
 end
 
+function _conformal_block_sets(primary_specs, mixed_commutator::Bool)
+    required_blocks = Set{Tuple{Symbol,Int}}(((:singlet, 0),))
+    spectral_blocks = Set{Tuple{Symbol,Int}}(((:singlet, 0),))
+    for spec in primary_specs
+        representation_data(spec.representation)
+        spec.ell >= 0 || throw(ArgumentError(
+            "primary angular momentum must be non-negative",
+        ))
+        spec.rank >= 1 || throw(ArgumentError("primary rank must be positive"))
+        push!(required_blocks, (spec.representation, spec.ell))
+        push!(spectral_blocks, (spec.representation, spec.ell))
+        for target_ell in _vector_target_ells(spec.ell)
+            push!(required_blocks, (spec.representation, target_ell))
+            push!(spectral_blocks, (spec.representation, target_ell))
+            if mixed_commutator
+                for final_ell in _vector_target_ells(target_ell)
+                    push!(required_blocks, (spec.representation, final_ell))
+                end
+            end
+        end
+    end
+    push!(required_blocks, (:singlet, 1))
+    push!(spectral_blocks, (:singlet, 1))
+    return required_blocks, spectral_blocks
+end
+
+"""
+Build the coupling-independent SO(3) spaces and generator matrices once.
+
+The returned mutable caches can be reused across Hamiltonian points through
+the `prepared_problem` keyword of `analyze_so3_conformal_algebra`.  Retuning a
+point then changes only composite-Hamiltonian coefficients; the exact
+Laughlin-1/3 projection, SO(3) spaces, and microscopic generator operators are
+not rebuilt.
+"""
+function build_so3_conformal_problem(
+    singlet_workspace::SO3Workspace,
+    adjoint_workspace::SO3Workspace,
+    couplings::Couplings;
+    primary_specs=DEFAULT_CONFORMAL_PRIMARY_SPECS,
+    mixed_commutator::Bool=true,
+    disp_std::Bool=true,
+)
+    singlet_workspace.model.representation == :singlet || throw(ArgumentError(
+        "the first workspace must be the singlet representation",
+    ))
+    adjoint_workspace.model.representation == :adjoint || throw(ArgumentError(
+        "the second workspace must be the adjoint representation",
+    ))
+    singlet_workspace.model.nm1 == adjoint_workspace.model.nm1 || throw(ArgumentError(
+        "singlet and adjoint workspaces must use the same system size",
+    ))
+    singlet_workspace.heavy_space_mode == adjoint_workspace.heavy_space_mode ||
+        throw(ArgumentError("singlet and adjoint workspaces must use the same projection"))
+    MottJainED.validate(couplings)
+    workspaces = Dict(
+        :singlet => singlet_workspace,
+        :adjoint => adjoint_workspace,
+    )
+    required_blocks, spectral_blocks = _conformal_block_sets(
+        primary_specs, mixed_commutator,
+    )
+    hamiltonians = Dict{Tuple{Symbol,Int},SO3Hamiltonian}()
+    for (representation, ell) in sort!(collect(required_blocks))
+        hamiltonians[(representation, ell)] = build_hamiltonian(
+            workspaces[representation], ell, couplings; disp_std,
+        )
+    end
+    candidates = Dict(
+        representation => build_generator_candidates(workspace.model)
+        for (representation, workspace) in workspaces
+    )
+    return (
+        workspaces=workspaces,
+        hamiltonians=hamiltonians,
+        candidates=candidates,
+        operator_cache=Dict{Tuple{Symbol,Int,Int},SO3GeneratorOperators}(),
+        warm_vectors=Dict{Tuple{Symbol,Int},Vector{Float64}}(),
+        required_blocks=required_blocks,
+        spectral_blocks=spectral_blocks,
+        primary_specs=Tuple(primary_specs),
+        mixed_commutator=mixed_commutator,
+    )
+end
+
 """
 Audit a common microscopic `Lambda`, `P`, and `K` against several primaries.
 
@@ -1393,6 +1478,7 @@ function analyze_so3_conformal_algebra(
     descendant_weight::Real=1.0,
     descendant_state_count::Int=6,
     mixed_commutator::Bool=true,
+    prepared_problem=nothing,
     eig_tol::Real=1.0e-8,
     ncv::Int=18,
     gram_rtol::Real=1.0e-10,
@@ -1419,32 +1505,31 @@ function analyze_so3_conformal_algebra(
         :singlet => singlet_workspace,
         :adjoint => adjoint_workspace,
     )
-    required_blocks = Set{Tuple{Symbol,Int}}(((:singlet, 0),))
-    spectral_blocks = Set{Tuple{Symbol,Int}}(((:singlet, 0),))
-    for spec in primary_specs
-        representation_data(spec.representation)
-        spec.ell >= 0 || throw(ArgumentError("primary angular momentum must be non-negative"))
-        spec.rank >= 1 || throw(ArgumentError("primary rank must be positive"))
-        push!(required_blocks, (spec.representation, spec.ell))
-        push!(spectral_blocks, (spec.representation, spec.ell))
-        for target_ell in _vector_target_ells(spec.ell)
-            push!(required_blocks, (spec.representation, target_ell))
-            push!(spectral_blocks, (spec.representation, target_ell))
-            if mixed_commutator
-                for final_ell in _vector_target_ells(target_ell)
-                    push!(required_blocks, (spec.representation, final_ell))
-                end
-            end
-        end
-    end
-    push!(required_blocks, (:singlet, 1))
-    push!(spectral_blocks, (:singlet, 1))
-
-    hamiltonians = Dict{Tuple{Symbol,Int},SO3Hamiltonian}()
-    for (representation, ell) in sort!(collect(required_blocks))
-        hamiltonians[(representation, ell)] = build_hamiltonian(
-            workspaces[representation], ell, couplings; disp_std,
+    required_blocks, spectral_blocks = _conformal_block_sets(
+        primary_specs, mixed_commutator,
+    )
+    if isnothing(prepared_problem)
+        prepared_problem = build_so3_conformal_problem(
+            singlet_workspace, adjoint_workspace, couplings;
+            primary_specs, mixed_commutator, disp_std,
         )
+    else
+        prepared_problem.primary_specs == Tuple(primary_specs) || throw(ArgumentError(
+            "prepared conformal problem uses different primary specifications",
+        ))
+        prepared_problem.mixed_commutator == mixed_commutator || throw(ArgumentError(
+            "prepared conformal problem uses a different mixed_commutator setting",
+        ))
+        prepared_problem.workspaces[:singlet] === singlet_workspace ||
+            throw(ArgumentError("prepared conformal problem uses another singlet workspace"))
+        prepared_problem.workspaces[:adjoint] === adjoint_workspace ||
+            throw(ArgumentError("prepared conformal problem uses another adjoint workspace"))
+        issubset(required_blocks, keys(prepared_problem.hamiltonians)) ||
+            throw(ArgumentError("prepared conformal problem is missing required blocks"))
+    end
+    hamiltonians = prepared_problem.hamiltonians
+    for hamiltonian in values(hamiltonians)
+        retune!(hamiltonian, couplings)
     end
 
     requested_counts = Dict{Tuple{Symbol,Int},Int}(
@@ -1469,18 +1554,18 @@ function analyze_so3_conformal_algebra(
         count >= 1 || throw(ArgumentError("block_counts must be positive"))
         block_energies, block_states = solve(
             hamiltonians[key]; k=count, tol=Float64(eig_tol), ncv,
-            vectors=true, disp_std,
+            vectors=true, initvec=get(prepared_problem.warm_vectors, key, nothing),
+            disp_std,
         )
         _canonicalize_state_signs!(block_states)
         energies[key] = block_energies
         states[key] = block_states
+        isempty(block_energies) ||
+            (prepared_problem.warm_vectors[key] = copy(block_states[:, 1]))
     end
 
-    candidates = Dict(
-        representation => build_generator_candidates(workspace.model)
-        for (representation, workspace) in workspaces
-    )
-    operator_cache = Dict{Tuple{Symbol,Int,Int},SO3GeneratorOperators}()
+    candidates = prepared_problem.candidates
+    operator_cache = prepared_problem.operator_cache
     function operators(representation::Symbol, initial_ell::Int, final_ell::Int)
         key = (representation, initial_ell, final_ell)
         return get!(operator_cache, key) do
@@ -1782,9 +1867,106 @@ function analyze_so3_conformal_algebra(
         k2=k2_results,
         vacuum_norm2=vacuum_norm2,
         energies=energies,
+        states=states,
         dimensions=Dict(key => hamiltonian.space.dim for (key, hamiltonian) in hamiltonians),
         heavy_space_mode=singlet_workspace.heavy_space_mode,
         generator_candidate_names=GENERATOR_CANDIDATE_NAMES,
+    )
+end
+
+const CONFORMAL_OBJECTIVE_TERMS = (
+    :primary_k, :dilatation, :mixed, :p_commutator, :k_commutator, :vacuum,
+)
+
+"""Combine selected algebra closures into a Hamiltonian-search objective."""
+function score_so3_conformal_algebra(
+    result;
+    labels=getproperty.(result.primary_rows, :label),
+    term_weights=Dict(term => 1.0 for term in CONFORMAL_OBJECTIVE_TERMS),
+    worst_weight::Real=0.25,
+)
+    selected_labels = Set(Symbol.(collect(labels)))
+    isempty(selected_labels) && throw(ArgumentError(
+        "the conformal-algebra objective needs at least one primary",
+    ))
+    primary_by_label = Dict(row.label => row for row in result.primary_rows)
+    mixed_by_label = Dict(row.label => row for row in result.mixed_commutator_rows)
+    issubset(selected_labels, keys(primary_by_label)) || throw(ArgumentError(
+        "the objective requested an unavailable primary label",
+    ))
+    issubset(selected_labels, keys(mixed_by_label)) || throw(ArgumentError(
+        "mixed-commutator results are required for every objective primary",
+    ))
+    weights = Dict{Symbol,Float64}()
+    for term in CONFORMAL_OBJECTIVE_TERMS
+        weight = Float64(get(term_weights, term, 0.0))
+        isfinite(weight) && weight >= 0 || throw(ArgumentError(
+            "weight for $term must be finite and non-negative",
+        ))
+        weights[term] = weight
+    end
+    unknown = setdiff(Symbol.(collect(keys(term_weights))), CONFORMAL_OBJECTIVE_TERMS)
+    isempty(unknown) || throw(ArgumentError(
+        "unknown conformal objective terms: $(join(String.(unknown), ", "))",
+    ))
+    isfinite(worst_weight) && worst_weight >= 0 || throw(ArgumentError(
+        "worst_weight must be finite and non-negative",
+    ))
+
+    rows = NamedTuple[]
+    for label in sort!(collect(selected_labels))
+        primary = primary_by_label[label]
+        mixed = mixed_by_label[label]
+        values = (
+            primary_k=primary.k_fraction,
+            dilatation=primary.p_dilatation_fraction,
+            mixed=mixed.fractional_residual,
+            p_commutator=mixed.p_commutator_fraction,
+            k_commutator=mixed.k_commutator_fraction,
+        )
+        for term in keys(values)
+            value = Float64(getproperty(values, term))
+            isfinite(value) && value >= 0 || error(
+                "non-finite conformal objective term $term for primary $label",
+            )
+            weights[term] > 0 && push!(rows, (
+                label=label,
+                term=term,
+                value=value,
+                weight=weights[term],
+                weighted_value=weights[term] * value,
+            ))
+        end
+    end
+    if weights[:vacuum] > 0
+        lambda_norm2 = sum(
+            primary_by_label[label].lambda_norm2 for label in selected_labels;
+            init=0.0,
+        )
+        vacuum_fraction = result.vacuum_norm2 /
+            max(lambda_norm2, eps(Float64))
+        push!(rows, (
+            label=:vacuum,
+            term=:vacuum,
+            value=vacuum_fraction,
+            weight=weights[:vacuum],
+            weighted_value=weights[:vacuum] * vacuum_fraction,
+        ))
+    end
+    isempty(rows) && throw(ArgumentError(
+        "at least one conformal objective weight must be positive",
+    ))
+    total_weight = sum(getproperty.(rows, :weight))
+    mean_value = sum(getproperty.(rows, :weighted_value)) / total_weight
+    worst_value = maximum(getproperty.(rows, :value))
+    return (
+        objective=mean_value + Float64(worst_weight) * worst_value,
+        mean=mean_value,
+        worst=worst_value,
+        worst_weight=Float64(worst_weight),
+        labels=sort!(collect(selected_labels)),
+        weights=weights,
+        rows=rows,
     )
 end
 
@@ -1981,7 +2163,9 @@ export SO3Model, SO3Workspace, SO3Hamiltonian,
        build_generator_candidates, build_generator_operators,
        fit_so3_generator, apply_so3_generator, so3_generator_overlaps,
        apply_so3_conformal_generator, so3_dilatation_residual,
-       analyze_scalar_generator, analyze_so3_conformal_algebra,
+       analyze_scalar_generator, build_so3_conformal_problem,
+       analyze_so3_conformal_algebra,
+       score_so3_conformal_algebra, CONFORMAL_OBJECTIVE_TERMS,
        GENERATOR_CANDIDATE_NAMES, DEFAULT_CONFORMAL_PRIMARY_SPECS,
        score_cft_blocks, CFT_BLOCK_KEYS, CFT_SCORE_TERMS,
        CFT_STABLE_SIX_TERMS, CFT_AUDITED_SEVEN_TERMS, CFT_RELATION_SPECS

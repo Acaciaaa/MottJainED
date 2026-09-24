@@ -1,8 +1,8 @@
 # Projected conformal-algebra pilot
 
 This branch replaces a small set of hand-selected integer gap targets with a
-native SO(3)lver test of a common microscopic conformal generator.  It is an
-audit/prototyping path, not yet the production outer-parameter optimizer.
+native SO(3)lver test of a common microscopic conformal generator.  It contains
+both the fixed-point audit and an experimental outer Hamiltonian optimizer.
 
 ## Representation and projection
 
@@ -130,6 +130,68 @@ Do not use `algebra_loss` in an outer Hamiltonian search until several fixed
 Hamiltonian points have been audited and at least one primary family has been
 reserved as a holdout.  The fit/holdout labels are explicit in the TOML and in
 every result row.
+
+## Hamiltonian optimization
+
+`scripts/so3lver_conformal_optimize.jl` performs an actual outer search over
+Hamiltonian couplings.  It does not choose `muc` afterward with the old
+integer-spectrum locator.  In the supplied projected profile the four direct
+optimization coordinates are
+
+```text
+Uf, Uf0, Vf0, muc
+```
+
+with `U0=9Uf`, `Vf=0`, `V0=0`, and `t=0.5`.  The exact
+parameter list and bounds remain configuration data.  The reusable conformal
+problem builds projected SO(3) spaces and generator operators once; every
+candidate then retunes the Hamiltonian, resolves the required low-energy
+states, refits the common generator, and evaluates the complete algebra.
+
+The current training set is `S,O,J`; `T` is excluded from both the generator
+fit and Hamiltonian objective.  Each training primary contributes
+
+```text
+K-primary, dilation, [K,P], [P,P], [K,K]
+```
+
+and the vacuum contributes one additional constraint.  The objective is the
+weighted mean of these 16 squared-norm ratios plus `worst_weight` times their
+largest value.  The state at every point must retain sufficient same-rank
+overlap with the anchor primary, the generator normalization must be valid,
+and the fitted cylinder factor may not lie on its configured boundary.
+
+Run the N=6 search with
+
+```bash
+julia --threads=4 --project=. scripts/so3lver_conformal_optimize.jl \
+  --config=config/so3lver/n6_projected_conformal_optimization.toml
+```
+
+The small end-to-end regression profile is
+
+```bash
+julia --threads=4 --project=. scripts/so3lver_conformal_optimize.jl \
+  --config=config/so3lver/n4_projected_conformal_optimization_smoke.toml \
+  --allow-test-size=true
+```
+
+An N=4 smoke search reduced the training objective from `0.419584` to
+`0.323264` and independently reduced the `T` holdout mean from `0.354160` to
+`0.296350`; it moved `muc` from `0.228811` to `0.261181`.  A deliberately tiny
+N=6 pilot (two Latin-hypercube points and two local iterations) found
+
+```text
+Uf=0.457406, U0=4.116650, Uf0=1.707473,
+Vf0=0.418754, V0=0, muc=0.276065
+```
+
+and reduced the training objective from `0.706920` to `0.338621`, while the
+strict `T` holdout mean fell from `0.312292` to `0.261337`.  This is evidence
+that algebra-driven Hamiltonian optimization is numerically viable, not a
+retained physical point: the optimizer was intentionally unconverged and its
+minimum anchor-state overlap was `0.69945`, just below the production profile's
+`0.70` gate.  A full multistart run and robustness neighbors are still needed.
 
 ## N=6 projected audit
 
