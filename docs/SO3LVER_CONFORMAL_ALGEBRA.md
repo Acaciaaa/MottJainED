@@ -164,7 +164,34 @@ and the fitted cylinder factor may not lie on its configured boundary.
 Run the N=6 search with
 
 ```bash
-julia --threads=4 --project=. scripts/so3lver_conformal_optimize.jl \
+mkdir -p slurm-logs
+sbatch slurm/so3lver_n6_conformal_optimize.sbatch
+```
+
+The production profile uses 24 Latin-hypercube points per trust-region round,
+six separated Nelder--Mead starts, and at most one automatic expansion into the
+wider hard bounds.  `muc` is one of the four simultaneous simplex coordinates.
+Every expensive point is appended to a source-signed checkpoint; resubmitting
+the same Slurm file resumes the deterministic search instead of recomputing
+finished points.
+
+Selection and ranking use only the `S/O/J` conformal-algebra objective.  The
+final candidate is accepted only after a cold eigensolver recheck, multistart
+basin agreement, coordinate-neighbor tests, the state-identity/factor gates,
+and a `T` holdout veto.  The old five- and stable-six energy scores are written
+to `best_spectrum_diagnostics.csv` only after selection and do not enter any
+search or acceptance decision.  The main server outputs are
+
+- `best.toml` (point, acceptance flags, cold check, holdout, and diagnostic
+  spectrum scores);
+- `algebra_optimization_evaluations.csv` (resumable point trace);
+- `multistart_convergence.csv` and `robustness_neighbors.csv`;
+- `top_candidates.csv` and the best-point constraint/component tables.
+
+For a direct interactive run, use
+
+```bash
+julia --threads=8 --project=. scripts/so3lver_conformal_optimize.jl \
   --config=config/so3lver/n6_projected_conformal_optimization.toml
 ```
 
@@ -191,7 +218,8 @@ strict `T` holdout mean fell from `0.312292` to `0.261337`.  This is evidence
 that algebra-driven Hamiltonian optimization is numerically viable, not a
 retained physical point: the optimizer was intentionally unconverged and its
 minimum anchor-state overlap was `0.69945`, just below the production profile's
-`0.70` gate.  A full multistart run and robustness neighbors are still needed.
+`0.70` gate.  The production multistart/robustness workflow above is the test of
+whether that pilot belongs to a genuinely new algebraic basin.
 
 ## N=6 projected audit
 

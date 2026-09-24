@@ -4,7 +4,7 @@ tol = 1.0e-8
 ncv = 18
 seed = 20260924
 heavy_space_mode = "laughlin13"
-output = "output/so3lver/conformal_optimization/n6_local_01"
+output = "output/so3lver/conformal_optimization/n6_multistart_01"
 
 [base]
 Uf = 0.48
@@ -48,20 +48,44 @@ vacuum = 1.0
 # by the exact projected-space identity.
 parameters = ["Uf", "Uf0", "Vf0", "mu"]
 u0_over_uf = 9.0
-initial_samples = 8
-local_iterations = 14
-simplex_step = 0.16
+initial_samples = 24
+local_starts = 6
+local_iterations = 60
+simplex_step = 0.20
+maximum_rounds = 2
+expansion_factor = 1.5
+boundary_fraction = 0.10
+minimum_start_distance = 0.30
+top_candidate_count = 30
 minimum_identity_overlap = 0.70
 penalty = 1000.0
+cold_recheck_tolerance = 1.0e-5
+# T never selects a point.  This is only a final anti-overfitting veto.
+holdout_maximum_anchor_ratio = 1.05
+consensus_objective_tolerance = 0.003
+robustness_objective_tolerance = 0.002
+hard_boundary_fraction = 0.005
 
 [search.initial_half_widths]
-Uf = 0.04
-Uf0 = 0.20
-Vf0 = 0.09
-mu = 0.045
+Uf = 0.08
+Uf0 = 0.40
+Vf0 = 0.18
+mu = 0.09
 
 [search.bounds]
-Uf = [0.40, 0.56]
-Uf0 = [1.28, 2.08]
-Vf0 = [0.17, 0.54]
-mu = [0.14, 0.32]
+Uf = [0.32, 0.72]
+Uf0 = [0.80, 2.80]
+Vf0 = [0.05, 0.90]
+mu = [0.10, 0.38]
+
+[search.consensus_parameter_tolerances]
+Uf = 0.015
+Uf0 = 0.04
+Vf0 = 0.02
+mu = 0.010
+
+[search.robustness_steps]
+Uf = 0.01
+Uf0 = 0.02
+Vf0 = 0.01
+mu = 0.005

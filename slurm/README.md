@@ -24,6 +24,7 @@ sbatch slurm/generator.sbatch
 | critical | `critical.sbatch` |
 | FSS 数据和 DeltaS/DeltaO 图 | `fss.sbatch`（数组任务分别扫描 Uf0/Vf0） |
 | Hamiltonian 参数优化 | `optimize.sbatch` |
+| SO(3)lver N=6 conformal-algebra 多起点参数优化 | `so3lver_n6_conformal_optimize.sbatch` |
 | SO(3)lver N=6 六项嵌套参数优化 | `so3lver_n6_nested_optimize.sbatch` |
 | SO(3)lver N=7 同协议六项嵌套比较 | `so3lver_n7_nested_optimize.sbatch` |
 | scaling dimension 图 | `scaling.sbatch` |

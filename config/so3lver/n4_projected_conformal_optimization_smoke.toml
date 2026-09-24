@@ -4,7 +4,7 @@ tol = 1.0e-9
 ncv = 12
 seed = 20260924
 heavy_space_mode = "laughlin13"
-output = "output/so3lver/conformal_optimization/n4_smoke_01"
+output = "output/so3lver/conformal_optimization/n4_smoke_multistart_01"
 
 [base]
 Uf = 0.48
@@ -44,10 +44,21 @@ vacuum = 1.0
 parameters = ["Uf", "Uf0", "Vf0", "mu"]
 u0_over_uf = 9.0
 initial_samples = 4
+local_starts = 2
 local_iterations = 5
 simplex_step = 0.16
+maximum_rounds = 1
+expansion_factor = 1.5
+boundary_fraction = 0.10
+minimum_start_distance = 0.20
+top_candidate_count = 10
 minimum_identity_overlap = 0.40
 penalty = 1000.0
+cold_recheck_tolerance = 1.0e-5
+holdout_maximum_anchor_ratio = 2.0
+consensus_objective_tolerance = 0.05
+robustness_objective_tolerance = 0.02
+hard_boundary_fraction = 0.0
 
 [search.initial_half_widths]
 Uf = 0.03
@@ -61,3 +72,14 @@ Uf0 = [1.28, 2.08]
 Vf0 = [0.17, 0.54]
 mu = [0.14, 0.32]
 
+[search.consensus_parameter_tolerances]
+Uf = 0.10
+Uf0 = 0.40
+Vf0 = 0.20
+mu = 0.10
+
+[search.robustness_steps]
+Uf = 0.005
+Uf0 = 0.01
+Vf0 = 0.005
+mu = 0.003
