@@ -3,7 +3,6 @@
 #SBATCH --nodes=1
 #SBATCH --ntasks-per-node=6
 #SBATCH --cpus-per-task=1
-#SBATCH --mem=16G
 #SBATCH --partition=sdicnormal
 #SBATCH --output=slurm-logs/so3-n6-conf-fix-%j.out
 

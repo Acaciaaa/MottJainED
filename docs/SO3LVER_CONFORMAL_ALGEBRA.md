@@ -204,12 +204,12 @@ deliberately writes a new directory,
 `output/so3lver/conformal_optimization/n6_multistart_02_cg_corrected`, so it
 cannot resume or overwrite the invalidly weighted `n6_multistart_01` trace.
 
-The Slurm entry requests six tasks and 16 GiB on one node.  Each worker uses
-one Julia thread; the projected N=6 benchmark showed no wall-time gain from
-adding threads *inside one solve*, while independent multistart workers do
-reduce wall time.  A projected workspace used roughly 2 GiB in the benchmark,
-so six processes require about 12 GiB before margin and fit in the explicit
-16 GiB request.
+The Slurm entry requests six tasks on one node and does not set `--mem` or
+`--time`.  On this cluster the CPU request already determines the memory
+allocation (currently about 7.8 GiB per CPU), so six CPUs automatically supply
+ample memory for six roughly 2 GiB projected workspaces.  Each worker uses one
+Julia thread; the benchmark showed no wall-time gain from adding threads
+*inside one solve*, while independent multistart workers do reduce wall time.
 
 Selection and ranking use only the `S/O/J` conformal-algebra objective.  The
 final candidate is accepted only after a cold eigensolver recheck, multistart
