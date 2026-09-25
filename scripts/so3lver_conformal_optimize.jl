@@ -183,7 +183,7 @@ output = abspath(get(
 validate_only = lowercase(get(options, "validate-only", "false")) == "true"
 so3_path = joinpath(PROJECT_ROOT, "experimental", "SO3lverED.jl")
 signature = MottJainED.stable_id(
-    "projected-conformal-hamiltonian-optimization-v2",
+    "projected-conformal-hamiltonian-optimization-v3-cg-norm",
     nm, tol, ncv, seed, String(heavy_space_mode), parameters, center,
     lower, upper, half_widths, initial_samples, local_starts, local_iterations,
     simplex_step, maximum_rounds, expansion_factor, boundary_fraction,

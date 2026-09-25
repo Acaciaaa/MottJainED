@@ -1,5 +1,20 @@
 # Projected conformal-algebra pilot
 
+> **September 2026 normalization correction.**  An independent operator audit
+> verified that the native SO(3)lver rank-one tensors, their Hermitian phases,
+> and the direct Jack/Laughlin projection are correct.  It found a later
+> reduced-matrix norm conversion error: for a CG-normalized `L -> L'` action,
+> the norm summed over vector components and averaged over the source
+> multiplet has weight `(2L'+1)/(2L+1)`.  The original pilot used only
+> `1/(2L+1)`, underweighting target multiplets by `2L'+1`.  This especially
+> changes the relative `J` and `T` channels and therefore changes both the
+> fitted generator and the Hamiltonian objective.  The production output is
+> now `n6_multistart_02_cg_corrected`; all numerical N=6 optimization results
+> below from `n6_multistart_01` are historical diagnostics and must not be
+> used as a corrected conformal-algebra result.  The same audit added an
+> eigensolver retry for an exact warm vector that previously could return only
+> one Ritz pair and cause a `BoundsError`.
+
 This branch replaces a small set of hand-selected integer gap targets with a
 native SO(3)lver test of a common microscopic conformal generator.  It contains
 both the fixed-point audit and an experimental outer Hamiltonian optimizer.
@@ -53,6 +68,13 @@ spectral gap to be an integer.  `w_D` is the explicit `dilatation_weight` in
 the configuration.  The `[D,K]+K` numerator is the negative of the displayed
 `[D,P]-P` numerator for `P,K` defined from the same `Lambda`, so it is not
 double-counted in the fit.
+
+Every displayed channel norm denotes the physical sum over the three vector
+components, averaged over the `2L+1` magnetic substates of the source.  Since
+the stored SO(3)lver matrix is CG-normalized, a reduced `L -> L'` matrix norm is
+multiplied by `(2L'+1)/(2L+1)`.  The scalar `[Kz,Pz]` normalization remains a
+single Cartesian component and consequently does not carry that factor of
+three.
 
 `Q_low` is the projector onto a configurable number of low-energy states in
 the complete target SO(3) block.  It does not select a named descendant, but
@@ -173,7 +195,9 @@ six separated Nelder--Mead starts, and at most one automatic expansion into the
 wider hard bounds.  `muc` is one of the four simultaneous simplex coordinates.
 Every expensive point is appended to a source-signed checkpoint; resubmitting
 the same Slurm file resumes the deterministic search instead of recomputing
-finished points.
+finished points.  The corrected profile deliberately writes a new directory,
+`output/so3lver/conformal_optimization/n6_multistart_02_cg_corrected`, so it
+cannot resume or overwrite the invalidly weighted `n6_multistart_01` trace.
 
 The Slurm entry uses one Julia thread and leaves memory and wall time to the
 `sdicnormal` defaults.  The projected N=6 benchmark showed no wall-time gain
@@ -210,23 +234,27 @@ julia --threads=4 --project=. scripts/so3lver_conformal_optimize.jl \
   --allow-test-size=true
 ```
 
-An N=4 smoke search reduced the training objective from `0.419584` to
-`0.323264` and independently reduced the `T` holdout mean from `0.354160` to
-`0.296350`; it moved `muc` from `0.228811` to `0.261181`.  A deliberately tiny
-N=6 pilot (two Latin-hypercube points and two local iterations) found
+After the CG-norm correction, an N=4 smoke search reduced the training
+objective from `0.421166` to `0.325437` and independently reduced the `T`
+holdout mean from `0.354888` to `0.309333`; it moved `muc` from `0.228811` to
+`0.255884`.  It passed the cold recheck, local-neighbor, multistart, boundary,
+and holdout gates.  Before the correction, a deliberately tiny N=6 pilot (two
+Latin-hypercube points and two local iterations) found
 
 ```text
 Uf=0.457406, U0=4.116650, Uf0=1.707473,
 Vf0=0.418754, V0=0, muc=0.276065
 ```
 
-and reduced the training objective from `0.706920` to `0.338621`, while the
+and reduced the then-misweighted training objective from `0.706920` to
+`0.338621`, while the
 strict `T` holdout mean fell from `0.312292` to `0.261337`.  This is evidence
-that algebra-driven Hamiltonian optimization is numerically viable, not a
-retained physical point: the optimizer was intentionally unconverged and its
-minimum anchor-state overlap was `0.69945`, just below the production profile's
-`0.70` gate.  The production multistart/robustness workflow above is the test of
-whether that pilot belongs to a genuinely new algebraic basin.
+only that the workflow was numerically viable, not a retained physical point:
+besides the later normalization correction, the optimizer was intentionally
+unconverged and its minimum anchor-state overlap was `0.69945`, just below the
+production profile's `0.70` gate.  The corrected production
+multistart/robustness workflow above is the test of whether a genuinely new
+algebraic basin exists.
 
 ## N=6 projected audit
 

@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-#SBATCH --job-name=so3-n6-conf
+#SBATCH --job-name=so3-n6-conf-fix
 #SBATCH --nodes=1
 #SBATCH --ntasks-per-node=1
 #SBATCH --cpus-per-task=1
 #SBATCH --partition=sdicnormal
-#SBATCH --output=slurm-logs/so3-n6-conf-%j.out
+#SBATCH --output=slurm-logs/so3-n6-conf-fix-%j.out
 
 set -euo pipefail
 project_dir="${SLURM_SUBMIT_DIR:-$(pwd)}"
@@ -17,7 +17,7 @@ cd "$project_dir"
 
 config_path="config/so3lver/n6_projected_conformal_optimization.toml"
 result_parent="output/so3lver/conformal_optimization"
-result_name="n6_multistart_01"
+result_name="n6_multistart_02_cg_corrected"
 result_dir="$result_parent/$result_name"
 mkdir -p "$result_dir"
 

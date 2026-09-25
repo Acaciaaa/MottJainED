@@ -4,7 +4,7 @@ tol = 1.0e-8
 ncv = 18
 seed = 20260924
 heavy_space_mode = "laughlin13"
-output = "output/so3lver/conformal_optimization/n6_multistart_01"
+output = "output/so3lver/conformal_optimization/n6_multistart_02_cg_corrected"
 
 [base]
 Uf = 0.48

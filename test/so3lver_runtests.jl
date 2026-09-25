@@ -78,6 +78,14 @@ end
         initvec=ones(sector_dimension(singlet_hamiltonians[1])), disp_std=false,
     )
     @test warm_matrix_free ≈ matrix_free atol=2e-11
+    _, exact_states = solve(
+        singlet_hamiltonians[1]; k=2, vectors=true, disp_std=false,
+    )
+    exact_warm_matrix_free = solve(
+        singlet_hamiltonians[1]; k=2, dense_cutoff=0,
+        initvec=view(exact_states, :, 1), disp_std=false,
+    )
+    @test exact_warm_matrix_free ≈ matrix_free atol=2e-11
     @test_throws DimensionMismatch solve(
         singlet_hamiltonians[1]; k=2, dense_cutoff=0,
         initvec=ones(2), disp_std=false,
@@ -192,6 +200,95 @@ end
         @test convergence_errors[3] < 2e-3
     end
 
+    # Audit generator construction separately from the Hamiltonian.  Project
+    # every full-space rank-one candidate with explicit V1-kernel bases and
+    # compare basis-independent singular values and the joint Hilbert--Schmidt
+    # Gram matrix with the operators built directly in the Jack space.
+    generator_model = build_so3_model(nm1=4, representation=:singlet)
+    generator_full_workspace = build_workspace(
+        generator_model; disp_std=false,
+    )
+    generator_projected_workspace = build_workspace(
+        generator_model; heavy_space_mode=:laughlin13, disp_std=false,
+    )
+    full_hamiltonians = Dict(
+        ell => build_hamiltonian(
+            generator_full_workspace, ell, couplings; disp_std=false,
+        )
+        for ell in 0:1
+    )
+    projected_hamiltonians = Dict(
+        ell => build_hamiltonian(
+            generator_projected_workspace, ell, couplings; disp_std=false,
+        )
+        for ell in 0:1
+    )
+    projector_bases = Dict{Int,Matrix{Float64}}()
+    for ell in 0:1
+        full_v1 = Matrix(
+            build_heavy_v1_operator(full_hamiltonians[ell]; disp_std=false);
+            disp_std=false,
+        )
+        decomposition = eigen(Symmetric(full_v1))
+        zero_indices = findall(abs.(decomposition.values) .< 2e-10)
+        @test length(zero_indices) ==
+              sector_dimension(projected_hamiltonians[ell])
+        projector_bases[ell] = decomposition.vectors[:, zero_indices]
+    end
+    candidates = build_generator_candidates(generator_model)
+    full_forward = build_generator_operators(
+        full_hamiltonians[0].space, full_hamiltonians[1].space, candidates;
+        disp_std=false,
+    )
+    projected_forward = build_generator_operators(
+        projected_hamiltonians[0].space, projected_hamiltonians[1].space,
+        candidates; disp_std=false,
+    )
+    explicit_projected_matrices = [
+        projector_bases[1]' * Matrix(operator; disp_std=false) *
+        projector_bases[0]
+        for operator in full_forward.operators
+    ]
+    direct_projected_matrices = [
+        Matrix(operator; disp_std=false)
+        for operator in projected_forward.operators
+    ]
+    for (explicit_matrix, direct_matrix) in zip(
+        explicit_projected_matrices, direct_projected_matrices,
+    )
+        @test isapprox(
+            svdvals(explicit_matrix), svdvals(direct_matrix);
+            atol=2e-11, rtol=2e-11,
+        )
+    end
+    explicit_gram = [
+        dot(first_matrix, second_matrix)
+        for first_matrix in explicit_projected_matrices,
+            second_matrix in explicit_projected_matrices
+    ]
+    direct_gram = [
+        dot(first_matrix, second_matrix)
+        for first_matrix in direct_projected_matrices,
+            second_matrix in direct_projected_matrices
+    ]
+    @test explicit_gram ≈ direct_gram atol=2e-11 rtol=2e-11
+
+    # FuzzifiED uses CG-normalized reduced matrices.  Hermitian rank-one
+    # tensors therefore acquire the required -sqrt(3) factor when reversing
+    # L=0 -> 1, rather than being a plain transpose.
+    projected_reverse = build_generator_operators(
+        projected_hamiltonians[1].space, projected_hamiltonians[0].space,
+        candidates; disp_std=false,
+    )
+    for (forward_operator, reverse_operator) in zip(
+        projected_forward.operators, projected_reverse.operators,
+    )
+        forward_matrix = Matrix(forward_operator; disp_std=false)
+        reverse_matrix = Matrix(reverse_operator; disp_std=false)
+        @test norm(reverse_matrix + sqrt(3) * forward_matrix') <=
+              2e-11 * max(1.0, norm(forward_matrix), norm(reverse_matrix))
+    end
+
     # Inside the exact V1 kernel, the old V0 component has no remaining
     # pseudopotential action.  It must therefore be only a common energy shift
     # plus a chemical-potential shift, so V0 is no longer a physical axis.
@@ -210,6 +307,29 @@ end
         redundancy_coefficients[2] * mu_matrix,
     ) / norm(v0_matrix)
     @test redundancy_residual < 2e-12
+end
+
+@testset "Rank-one reduced-matrix norm conversion" begin
+    for initial_ell in 0:4
+        for final_ell in SO3lverED._vector_target_ells(initial_ell)
+            explicit_weight = sum(
+                abs2(SO3lverED._wigner_eckart_coefficient(
+                    initial_ell, initial_m, component, final_ell,
+                ))
+                for initial_m in -initial_ell:initial_ell,
+                    component in (-1, 0, 1)
+            ) / (2initial_ell + 1)
+            @test explicit_weight ≈
+                  SO3lverED._vector_reduced_norm_weight(
+                      initial_ell, final_ell,
+                  ) atol=2e-14 rtol=2e-14
+        end
+    end
+    @test SO3lverED._vector_reduced_norm_weight(0, 1) == 3.0
+    @test SO3lverED._vector_reduced_norm_weight(1, 0) == 1 / 3
+    @test SO3lverED._vector_reduced_norm_weight(1, 1) == 1.0
+    @test SO3lverED._vector_reduced_norm_weight(1, 2) == 5 / 3
+    @test_throws ArgumentError SO3lverED._vector_reduced_norm_weight(0, 0)
 end
 
 @testset "Native SO(3)lver conformal generator" begin

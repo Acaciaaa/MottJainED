@@ -474,6 +474,34 @@ function solve(
                 initvec=Float64.(initvec), kwargs...,
             )
         end
+        if length(energies) < count
+            # A nearly exact warm vector can make the Krylov space close after
+            # one Ritz pair even when more eigenpairs were requested.  Retry
+            # from a deterministic generic direction with a larger subspace;
+            # otherwise the old sortperm(...)[1:count] raised a BoundsError.
+            retry_initvec = [
+                sin(index * sqrt(2.0)) + cos(index * sqrt(3.0))
+                for index in 1:dimension
+            ]
+            retry_initvec ./= norm(retry_initvec)
+            retry_ncv = min(
+                dimension,
+                max(count + 1, 2krylov_dimension, 4count + 10),
+            )
+            disp_std && println(
+                "Krylov returned $(length(energies))/$count eigenpairs; " *
+                "retrying with ncv=$retry_ncv",
+            )
+            energies, states = GetEigensystem(
+                hamiltonian.operator, count;
+                initvec=retry_initvec, tol, ncv=retry_ncv,
+                issymmetric=true, disp_std,
+            )
+        end
+        length(energies) >= count || error(
+            "Krylov eigensolver returned $(length(energies)) of $count " *
+            "requested eigenpairs after a deterministic retry",
+        )
         # KrylovKit may return an extra converged Ritz value; keep the public
         # contract exact and deterministic.
         order = sortperm(energies)[1:count]
@@ -961,6 +989,23 @@ function _fit_primary_annihilating_generator(
 end
 
 _vector_target_ells(ell::Int) = ell == 0 ? [1] : collect((ell - 1):(ell + 1))
+
+"""
+Convert a Clebsch--Gordan-normalized rank-one reduced action from `L` to `L'`
+to the norm summed over the three vector components and averaged over the
+source magnetic multiplet.
+
+FuzzifiED stores `<L'm'|T_q|Lm> = CG(Lm,1q|L'm') * reduced_matrix`.  Summing
+the squared CG coefficients gives `2L'+1`, not one, so the physical weight is
+`(2L'+1)/(2L+1)`.
+"""
+function _vector_reduced_norm_weight(initial_ell::Int, final_ell::Int)
+    initial_ell >= 0 || throw(ArgumentError("initial angular momentum must be nonnegative"))
+    final_ell in _vector_target_ells(initial_ell) || throw(ArgumentError(
+        "rank-one tensor cannot connect L=$initial_ell to L'=$final_ell",
+    ))
+    return (2final_ell + 1) / (2initial_ell + 1)
+end
 
 const _SPHERICAL_COMPONENTS = (-1, 0, 1)
 const _SPHERICAL_TO_CARTESIAN = ComplexF64[
@@ -1578,15 +1623,16 @@ function analyze_so3_conformal_algebra(
     end
 
     vacuum = view(states[(:singlet, 0)], :, 1)
-    vacuum_design = _candidate_action_matrix(
+    vacuum_reduced_design = _candidate_action_matrix(
         vacuum, operators(:singlet, 0, 1),
     )
+    vacuum_design = sqrt(_vector_reduced_norm_weight(0, 1)) .*
+                    vacuum_reduced_design
     channels = NamedTuple[]
     for spec in primary_specs
         source_key = (spec.representation, spec.ell)
         source_energy = energies[source_key][spec.rank]
         source = view(states[source_key], :, spec.rank)
-        weight = inv(2spec.ell + 1)
         for target_ell in _vector_target_ells(spec.ell)
             final_hamiltonian = hamiltonians[(spec.representation, target_ell)]
             operator_set = operators(spec.representation, spec.ell, target_ell)
@@ -1609,7 +1655,7 @@ function analyze_so3_conformal_algebra(
                 target_ell=target_ell,
                 source_rank=spec.rank,
                 source_energy=source_energy,
-                weight=weight,
+                weight=_vector_reduced_norm_weight(spec.ell, target_ell),
                 lambda_design=lambda_design,
                 commutator_numerator=commutator_numerator,
                 second_commutator_numerator=second_commutator_numerator,
@@ -1730,8 +1776,12 @@ function analyze_so3_conformal_algebra(
                 p_low_energy_leakage_norm2=p_leakage_norm2,
             ))
         end
+        # `totals` are physical sums over x,y,z.  The scalar commutator below
+        # is one Cartesian component, [Kz,Pz], so undo the L=0 -> L'=1 factor
+        # of three before comparing it with 2D.
         scalar_commutator_lhs = spec.ell == 0 ?
-            totals[:p] - totals[:k] : NaN
+            (totals[:p] - totals[:k]) /
+                _vector_reduced_norm_weight(0, 1) : NaN
         scalar_commutator_target = spec.ell == 0 ?
             2 * (energies[(spec.representation, spec.ell)][spec.rank] - ground_energy) /
                 factor : NaN
@@ -1833,7 +1883,9 @@ function analyze_so3_conformal_algebra(
                 "non-finite K action in representation=$representation " *
                 "L=$source_ell->$target_ell",
             )
-            multiplet_weight = inv(2source_ell + 1)
+            multiplet_weight = _vector_reduced_norm_weight(
+                source_ell, target_ell,
+            )
             lambda_gram .+= multiplet_weight .* (lambda_map' * lambda_map)
             k_gram .+= multiplet_weight .* (k_map' * k_map)
         end
