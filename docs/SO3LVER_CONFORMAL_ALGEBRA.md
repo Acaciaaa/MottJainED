@@ -190,21 +190,26 @@ mkdir -p slurm-logs
 sbatch slurm/so3lver_n6_conformal_optimize.sbatch
 ```
 
-The production profile uses 24 Latin-hypercube points per trust-region round,
-six separated Nelder--Mead starts, and at most one automatic expansion into the
-wider hard bounds.  `muc` is one of the four simultaneous simplex coordinates.
-Every expensive point is appended to a source-signed checkpoint; resubmitting
-the same Slurm file resumes the deterministic search instead of recomputing
-finished points.  The corrected profile deliberately writes a new directory,
+The production Slurm entry launches six independent one-CPU Julia workers.
+Each worker receives one deliberately separated four-dimensional
+Nelder--Mead start and four independently seeded Latin-hypercube points, for
+24 exploratory LHS points in total.  Each worker may trigger at most one
+automatic expansion into the wider hard bounds, and `muc` is one of the four
+simultaneous simplex coordinates.  Workers have separate projected SO(3)
+workspaces, CSV files, and source-signed checkpoints, so resubmitting the same
+Slurm file resumes their completed Hamiltonian points without concurrent
+writes.  After all six finish, a separate aggregator checks parameter and
+objective consensus across their endpoints.  The corrected profile
+deliberately writes a new directory,
 `output/so3lver/conformal_optimization/n6_multistart_02_cg_corrected`, so it
 cannot resume or overwrite the invalidly weighted `n6_multistart_01` trace.
 
-The Slurm entry uses one Julia thread and leaves memory and wall time to the
-`sdicnormal` defaults.  The projected N=6 benchmark showed no wall-time gain
-from four threads over one, while the local conformal pilot took roughly
-46--69 seconds per point.  One CPU receives about 7.8 GiB by the current
-partition policy, comfortably above the measured roughly 2 GiB projected
-workspace peak; requesting idle CPUs only for memory is therefore unnecessary.
+The Slurm entry requests six tasks and 16 GiB on one node.  Each worker uses
+one Julia thread; the projected N=6 benchmark showed no wall-time gain from
+adding threads *inside one solve*, while independent multistart workers do
+reduce wall time.  A projected workspace used roughly 2 GiB in the benchmark,
+so six processes require about 12 GiB before margin and fit in the explicit
+16 GiB request.
 
 Selection and ranking use only the `S/O/J` conformal-algebra objective.  The
 final candidate is accepted only after a cold eigensolver recheck, multistart
@@ -216,7 +221,8 @@ search or acceptance decision.  The main server outputs are
 - `best.toml` (point, acceptance flags, cold check, holdout, and diagnostic
   spectrum scores);
 - `algebra_optimization_evaluations.csv` (resumable point trace);
-- `multistart_convergence.csv` and `robustness_neighbors.csv`;
+- per-worker `multistart_convergence.csv` and `robustness_neighbors.csv`;
+- root-level `parallel_convergence.csv` and `parallel_summary.toml`;
 - `top_candidates.csv` and the best-point constraint/component tables.
 
 For a direct interactive run, use

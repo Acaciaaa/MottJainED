@@ -65,7 +65,15 @@ allow_test_size = lowercase(get(options, "allow-test-size", "false")) == "true"
 )
 tol = Float64(run_config["tol"])
 ncv = Int(run_config["ncv"])
-seed = Int(run_config["seed"])
+base_seed = Int(run_config["seed"])
+worker_index = parse(Int, get(options, "worker-index", "0"))
+parallel_workers = parse(Int, get(options, "parallel-workers", "1"))
+worker_index >= 0 || error("worker-index must be nonnegative")
+parallel_workers >= 1 || error("parallel-workers must be positive")
+worker_index <= parallel_workers || error(
+    "worker-index cannot exceed parallel-workers",
+)
+seed = base_seed + max(worker_index - 1, 0)
 heavy_space_mode = Symbol(lowercase(String(run_config["heavy_space_mode"])))
 heavy_space_mode == :laughlin13 || error(
     "conformal optimization requires heavy_space_mode=\"laughlin13\"",
@@ -123,6 +131,18 @@ all((lower .<= center) .& (center .<= upper)) || error(
     "base point lies outside the search bounds",
 )
 all(half_widths .> 0) || error("initial half-widths must be positive")
+forced_start_values = if haskey(options, "forced-start")
+    parsed_start = parse.(Float64, split(options["forced-start"], ','))
+    length(parsed_start) == length(parameters) || error(
+        "forced-start must contain Uf,Uf0,Vf0,mu",
+    )
+    all((lower .<= parsed_start) .& (parsed_start .<= upper)) || error(
+        "forced-start must lie inside the hard parameter bounds",
+    )
+    parsed_start
+else
+    nothing
+end
 
 minimum_identity_overlap = Float64(search_config["minimum_identity_overlap"])
 0 <= minimum_identity_overlap <= 1 || error(
@@ -183,8 +203,9 @@ output = abspath(get(
 validate_only = lowercase(get(options, "validate-only", "false")) == "true"
 so3_path = joinpath(PROJECT_ROOT, "experimental", "SO3lverED.jl")
 signature = MottJainED.stable_id(
-    "projected-conformal-hamiltonian-optimization-v3-cg-norm",
-    nm, tol, ncv, seed, String(heavy_space_mode), parameters, center,
+    "projected-conformal-hamiltonian-optimization-v4-cg-norm-parallel",
+    nm, tol, ncv, seed, worker_index, parallel_workers, forced_start_values,
+    String(heavy_space_mode), parameters, center,
     lower, upper, half_widths, initial_samples, local_starts, local_iterations,
     simplex_step, maximum_rounds, expansion_factor, boundary_fraction,
     minimum_start_distance, fit_labels, training_labels, holdout_labels,
@@ -224,7 +245,8 @@ println("training=$(join(training_labels, ',')) holdout=$(join(holdout_labels, '
 println("fixed V0=0; linked U0=$(u0_over_uf)*Uf")
 println(
     "seed=$seed initial_samples=$initial_samples local_starts=$local_starts " *
-    "maximum_rounds=$maximum_rounds resume=$resuming",
+    "maximum_rounds=$maximum_rounds worker=$worker_index/$parallel_workers " *
+    "resume=$resuming",
 )
 println("config=$config_path")
 println("output=$output")
@@ -547,6 +569,18 @@ function run_search()
         candidates = Any[evaluate_point(
             region_center; source="round_$(round_index)_center",
         )]
+        forced_record = nothing
+        if round_index == 1 && !isnothing(forced_start_values)
+            all((region_lower .<= forced_start_values) .&
+                (forced_start_values .<= region_upper)) || error(
+                "forced-start must lie inside the first-round search box",
+            )
+            forced_record = evaluate_point(
+                forced_start_values;
+                source="round_$(round_index)_forced_start",
+            )
+            push!(candidates, forced_record)
+        end
         samples = latin_hypercube_points(
             initial_samples, region_lower, region_upper, rng,
         )
@@ -567,7 +601,12 @@ function run_search()
                 (candidate.values .<= region_upper)) && push!(candidates, candidate)
         end
 
-        starts = diverse_starts(candidates, local_starts, region_lower, region_upper)
+        starts = if !isnothing(forced_record) && forced_record.valid &&
+                    isfinite(forced_record.objective)
+            Any[forced_record]
+        else
+            diverse_starts(candidates, local_starts, region_lower, region_upper)
+        end
         isempty(starts) && error("round $round_index produced no valid local start")
         println("round=$round_index selected_local_starts=$(length(starts))")
         flush(stdout)
@@ -831,6 +870,8 @@ function run_search()
         "accepted" => accepted,
         "signature" => signature,
         "nm1" => nm,
+        "worker_index" => worker_index,
+        "parallel_workers" => parallel_workers,
         "seed" => seed,
         "heavy_space_mode" => String(heavy_space_mode),
         "parameters" => String.(parameters),

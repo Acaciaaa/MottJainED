@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 #SBATCH --job-name=so3-n6-conf-fix
 #SBATCH --nodes=1
-#SBATCH --ntasks-per-node=1
+#SBATCH --ntasks-per-node=6
 #SBATCH --cpus-per-task=1
+#SBATCH --mem=16G
 #SBATCH --partition=sdicnormal
 #SBATCH --output=slurm-logs/so3-n6-conf-fix-%j.out
 
@@ -20,12 +21,61 @@ result_parent="output/so3lver/conformal_optimization"
 result_name="n6_multistart_02_cg_corrected"
 result_dir="$result_parent/$result_name"
 mkdir -p "$result_dir"
+cp "$config_path" "$result_dir/optimization_config.toml"
 
-# The driver resumes all completed Hamiltonian points from its signed CSV
-# checkpoint.  Resubmitting this same file after timeout or preemption is safe.
+# Six deliberately separated four-dimensional starts.  Every worker builds an
+# independent projected SO(3) workspace, evaluates four independently seeded
+# Latin-hypercube points (24 total), runs one local optimizer, and writes only
+# to its own signed checkpoint directory.
+starts=(
+  "0.48,1.68,0.3549772487682664,0.22881105175318384"
+  "0.42,1.38,0.2199772487682664,0.16131105175318384"
+  "0.54,1.98,0.4899772487682664,0.29631105175318384"
+  "0.42,1.98,0.4899772487682664,0.29631105175318384"
+  "0.54,1.38,0.4899772487682664,0.16131105175318384"
+  "0.54,1.98,0.2199772487682664,0.16131105175318384"
+)
+
+pids=()
+for lane in $(seq 1 6); do
+  worker_dir="$result_dir/worker-$lane"
+  worker_log="$result_dir/worker-$lane.stdout.log"
+  mkdir -p "$worker_dir"
+  echo "launching_worker=$lane start=${starts[$((lane - 1))]} log=$worker_log"
+  srun --exclusive --nodes=1 --ntasks=1 --cpus-per-task=1 \
+    julia --startup-file=no --project=. \
+      scripts/so3lver_conformal_optimize.jl \
+      --config="$config_path" \
+      --output="$worker_dir" \
+      --worker-index="$lane" \
+      --parallel-workers=6 \
+      --initial-samples=4 \
+      --local-starts=1 \
+      --forced-start="${starts[$((lane - 1))]}" \
+    > "$worker_log" 2>&1 &
+  pids+=("$!")
+done
+
+worker_failure=0
+for index in "${!pids[@]}"; do
+  lane=$((index + 1))
+  if wait "${pids[$index]}"; then
+    echo "worker_complete=$lane"
+  else
+    echo "worker_failed=$lane log=$result_dir/worker-$lane.stdout.log" >&2
+    worker_failure=1
+  fi
+done
+if (( worker_failure != 0 )); then
+  echo "At least one conformal worker failed; retained all checkpoints in $result_dir" >&2
+  exit 1
+fi
+
 julia --startup-file=no --project=. \
-  scripts/so3lver_conformal_optimize.jl \
-  --config="$config_path"
+  scripts/so3lver_conformal_parallel_summary.jl \
+  --config="$config_path" \
+  --root="$result_dir" \
+  --workers=6
 
 archive="$result_parent/${result_name}_job-${SLURM_JOB_ID}.tar.gz"
 tar -czf "$archive" -C "$result_parent" "$result_name"
