@@ -522,16 +522,20 @@ const DEFAULT_CONFORMAL_PRIMARY_SPECS = (
     (label=:J, representation=:adjoint, ell=1, rank=1),
     (label=:T, representation=:singlet, ell=2, rank=1),
 )
+const DEFAULT_CONFORMAL_DESCENDANT_SPECS = (
+    (label=:dS, representation=:singlet, ell=1, rank=1),
+    (label=:curlJ, representation=:adjoint, ell=1, rank=2),
+)
 
 """The eight SU(3)-singlet microscopic rank-one tensors used to fit `Λ=P+K`."""
 struct SO3GeneratorCandidates
-    names::NTuple{8,Symbol}
+    names::Tuple{Vararg{Symbol}}
     decompositions::Vector{CoupleDecomps}
 end
 
 """The same generator candidates represented between two exact SO(3) blocks."""
 struct SO3GeneratorOperators
-    names::NTuple{8,Symbol}
+    names::Tuple{Vararg{Symbol}}
     initial_space::CompSpace{Float64}
     final_space::CompSpace{Float64}
     operators::Vector{CompOperator{Float64}}
@@ -569,7 +573,8 @@ original angular-momentum formula.  Mixed light-heavy projectors are recoupled
 from the pairing channel to segment density tensors with the SO(3)lver 9j
 convention.
 """
-function build_generator_candidates(model::SO3Model)
+function build_generator_candidates(model::SO3Model; basis::Symbol=:legacy)
+    basis in (:legacy, :local_density) || throw(ArgumentError("unknown generator basis $basis"))
     model.nm1 >= 4 || throw(ArgumentError(
         "native generator candidates require nm1 >= 4",
     ))
@@ -648,9 +653,43 @@ function build_generator_candidates(model::SO3Model)
         _real_generator_decomposition(decompositions[i], GENERATOR_CANDIDATE_NAMES[i])
         for i in eachindex(decompositions)
     ]
-    return SO3GeneratorCandidates(
-        GENERATOR_CANDIDATE_NAMES, real_decompositions,
-    )
+    names = collect(GENERATOR_CANDIDATE_NAMES)
+    if basis == :local_density
+        # Scalar Hamiltonian redundancies need not be redundancies of l=1
+        # density moments. Retain the historical improvement terms, and add
+        # the actual Hermitian local densities, including heavy one-body terms.
+        light = GetDensityObs(model.nm1, 3; norm_r2=radius2)
+        heavy = GetDensityObs(model.nm0, 1; norm_r2=radius2)
+        lapl = Laplacian(light; norm_r2=radius2)
+        laph = Laplacian(heavy; norm_r2=radius2)
+        function local_moment(obs, segment)
+            modes = AngModes(2, (l2, m2) -> l2 == 2 ?
+                GetComponent(obs, 1, m2 / 2) : Term[])
+            SingleSegCouple(2, segment, modes, 2, zero_shift)
+        end
+        additions = (
+            :density_Uf => local_moment(light * light, 1),
+            :density_Vf => local_moment(0.5 * (light * lapl + lapl * light), 1),
+            :density_U0 => local_moment(heavy * heavy, 2),
+            :density_V0 => local_moment(0.5 * (heavy * laph + laph * heavy), 2),
+            :density_Uf0 => ContactCouple([light, heavy], no_shift, 2),
+            :density_Vf0 => ContactCouple([lapl, heavy], no_shift, 2),
+            :density_heavy => local_moment(heavy, 2),
+        )
+        for (name, raw) in additions
+            nonzero = filter(raw) do channel
+                abs(channel.coeff) > 1e-13 && all(1:2) do segment
+                    channel.amd[segment] === :Identity || !isempty(GetComponent(
+                        channel.amd[segment], channel.ch[1, segment] / 2,
+                        channel.ch[1, segment] / 2,
+                    ))
+                end
+            end
+            push!(names, name)
+            push!(real_decompositions, _real_generator_decomposition(nonzero, name))
+        end
+    end
+    return SO3GeneratorCandidates(Tuple(names), real_decompositions)
 end
 
 """
@@ -1455,6 +1494,8 @@ function build_so3_conformal_problem(
     adjoint_workspace::SO3Workspace,
     couplings::Couplings;
     primary_specs=DEFAULT_CONFORMAL_PRIMARY_SPECS,
+    descendant_specs=(),
+    generator_basis::Symbol=:legacy,
     mixed_commutator::Bool=true,
     disp_std::Bool=true,
 )
@@ -1474,8 +1515,9 @@ function build_so3_conformal_problem(
         :singlet => singlet_workspace,
         :adjoint => adjoint_workspace,
     )
+    source_specs = (primary_specs..., descendant_specs...)
     required_blocks, spectral_blocks = _conformal_block_sets(
-        primary_specs, mixed_commutator,
+        source_specs, mixed_commutator,
     )
     hamiltonians = Dict{Tuple{Symbol,Int},SO3Hamiltonian}()
     for (representation, ell) in sort!(collect(required_blocks))
@@ -1484,7 +1526,7 @@ function build_so3_conformal_problem(
         )
     end
     candidates = Dict(
-        representation => build_generator_candidates(workspace.model)
+        representation => build_generator_candidates(workspace.model; basis=generator_basis)
         for (representation, workspace) in workspaces
     )
     return (
@@ -1496,6 +1538,9 @@ function build_so3_conformal_problem(
         required_blocks=required_blocks,
         spectral_blocks=spectral_blocks,
         primary_specs=Tuple(primary_specs),
+        descendant_specs=Tuple(descendant_specs),
+        generator_basis=generator_basis,
+        generator_coordinates=Ref{Any}(nothing),
         mixed_commutator=mixed_commutator,
     )
 end
@@ -1515,6 +1560,15 @@ function analyze_so3_conformal_algebra(
     adjoint_workspace::SO3Workspace,
     couplings::Couplings;
     primary_specs=DEFAULT_CONFORMAL_PRIMARY_SPECS,
+    descendant_specs=(),
+    generator_basis::Symbol=:legacy,
+    full_algebra_fit::Bool=false,
+    training_labels=nothing,
+    conserved_labels=(:J, :T),
+    term_weights=nothing,
+    worst_weight::Real=0.25,
+    inner_iterations::Int=1200,
+    inner_starts::Int=2,
     block_counts=_default_conformal_block_counts(primary_specs),
     fit_primary_labels=getproperty.(primary_specs, :label),
     factor_bounds::Tuple{<:Real,<:Real}=(0.01, 0.10),
@@ -1550,18 +1604,24 @@ function analyze_so3_conformal_algebra(
         :singlet => singlet_workspace,
         :adjoint => adjoint_workspace,
     )
+    source_specs = (primary_specs..., descendant_specs...)
+    primary_labels = Set(getproperty.(primary_specs, :label))
     required_blocks, spectral_blocks = _conformal_block_sets(
-        primary_specs, mixed_commutator,
+        source_specs, mixed_commutator,
     )
     if isnothing(prepared_problem)
         prepared_problem = build_so3_conformal_problem(
             singlet_workspace, adjoint_workspace, couplings;
-            primary_specs, mixed_commutator, disp_std,
+            primary_specs, descendant_specs, generator_basis, mixed_commutator, disp_std,
         )
     else
         prepared_problem.primary_specs == Tuple(primary_specs) || throw(ArgumentError(
             "prepared conformal problem uses different primary specifications",
         ))
+        prepared_problem.descendant_specs == Tuple(descendant_specs) ||
+            throw(ArgumentError("prepared problem uses different descendant specifications"))
+        prepared_problem.generator_basis == generator_basis ||
+            throw(ArgumentError("prepared problem uses a different generator basis"))
         prepared_problem.mixed_commutator == mixed_commutator || throw(ArgumentError(
             "prepared conformal problem uses a different mixed_commutator setting",
         ))
@@ -1583,7 +1643,7 @@ function analyze_so3_conformal_algebra(
     )
     k2_source_keys = Set(keys(requested_counts))
     requested_counts[(:singlet, 0)] = max(get(requested_counts, (:singlet, 0), 0), 2)
-    for spec in primary_specs
+    for spec in source_specs
         key = (spec.representation, spec.ell)
         requested_counts[key] = max(get(requested_counts, key, 0), spec.rank)
     end
@@ -1629,7 +1689,7 @@ function analyze_so3_conformal_algebra(
     vacuum_design = sqrt(_vector_reduced_norm_weight(0, 1)) .*
                     vacuum_reduced_design
     channels = NamedTuple[]
-    for spec in primary_specs
+    for spec in source_specs
         source_key = (spec.representation, spec.ell)
         source_energy = energies[source_key][spec.rank]
         source = view(states[source_key], :, spec.rank)
@@ -1718,14 +1778,35 @@ function analyze_so3_conformal_algebra(
         scalar_commutator_residuals=scalar_commutator_residuals,
     ))
 
+    if full_algebra_fit
+        mixed_commutator || throw(ArgumentError("full fit requires mixed commutators"))
+        weights = isnothing(term_weights) ?
+            Dict(term => 1.0 for term in CONFORMAL_OBJECTIVE_TERMS) : term_weights
+        refined = _refine_full_conformal_fit(
+            prepared_problem, channels, vacuum_design, states, energies,
+            source_specs, primary_labels, Set(conserved_labels), operators, fit;
+            training_labels=isnothing(training_labels) ? fit_primary_labels : training_labels,
+            term_weights=weights, worst_weight,
+            iterations=inner_iterations, starts=inner_starts, gram_rtol,
+        )
+        fit = merge(fit, refined, (
+            initializer_loss=fit.value,
+            initializer_commutator_normalization_scale=fit.commutator_normalization_scale,
+            full_algebra_training_labels=Symbol.(collect(isnothing(training_labels) ?
+                fit_primary_labels : training_labels)),
+        ))
+        coefficients = fit.coefficients
+        factor = fit.factor
+    end
+
     channel_rows = NamedTuple[]
     primary_rows = NamedTuple[]
-    for spec in primary_specs
+    for spec in source_specs
         selected = filter(channel -> channel.label == spec.label, channels)
         totals = Dict(
             :lambda => 0.0, :p => 0.0, :k => 0.0,
             :p_residual => 0.0, :k_residual => 0.0,
-            :lambda_delta => 0.0,
+            :lambda_delta => 0.0, :shortening => 0.0,
         )
         for channel in selected
             lambda = channel.lambda_design * coefficients
@@ -1760,6 +1841,8 @@ function analyze_so3_conformal_algebra(
             totals[:k_residual] += k_residual_norm2
             totals[:p_leakage] = get(totals, :p_leakage, 0.0) + p_leakage_norm2
             totals[:lambda_delta] += lambda_delta
+            channel.target_ell == spec.ell - 1 &&
+                (totals[:shortening] += p_norm2)
             push!(channel_rows, (
                 label=spec.label,
                 representation=spec.representation,
@@ -1787,6 +1870,8 @@ function analyze_so3_conformal_algebra(
                 factor : NaN
         push!(primary_rows, (
             label=spec.label,
+            is_primary=spec.label in primary_labels,
+            is_conserved=spec.label in conserved_labels,
             representation=spec.representation,
             ell=spec.ell,
             rank=spec.rank,
@@ -1801,6 +1886,7 @@ function analyze_so3_conformal_algebra(
                 max(totals[:k], eps(Float64)),
             p_low_energy_leakage_fraction=totals[:p_leakage] /
                 max(totals[:p], eps(Float64)),
+            shortening_fraction=totals[:shortening] / max(totals[:p], eps(Float64)),
             lambda_mean_scaled_gap=totals[:lambda_delta] /
                 max(totals[:lambda], eps(Float64)),
             kp_commutator_lhs=scalar_commutator_lhs,
@@ -1808,7 +1894,8 @@ function analyze_so3_conformal_algebra(
             kp_commutator_fractional_residual=spec.ell == 0 ?
                 (scalar_commutator_lhs - scalar_commutator_target) /
                     max(abs(scalar_commutator_target), eps(Float64)) : NaN,
-            used_for_fit=spec.label in fit.fit_primary_labels,
+            used_for_fit=spec.label in (full_algebra_fit ?
+                fit.full_algebra_training_labels : fit.fit_primary_labels),
         ))
     end
 
@@ -1816,7 +1903,7 @@ function analyze_so3_conformal_algebra(
     mixed_commutator_rows = NamedTuple[]
     mixed_commutator_pair_rows = NamedTuple[]
     if mixed_commutator
-        for spec in primary_specs
+        for spec in source_specs
             source_key = (spec.representation, spec.ell)
             audit = _mixed_commutator_audit(
                 view(states[source_key], :, spec.rank),
@@ -1842,7 +1929,7 @@ function analyze_so3_conformal_algebra(
                 k_commutator_norm2=audit.k_commutator_norm2,
                 p_commutator_fraction=audit.p_commutator_fraction,
                 k_commutator_fraction=audit.k_commutator_fraction,
-                used_for_fit=spec.label in fit.fit_primary_labels,
+                used_for_fit=full_algebra_fit && spec.label in fit.full_algebra_training_labels,
             ))
             append!(mixed_commutator_pair_rows, (
                 merge((
@@ -1910,7 +1997,14 @@ function analyze_so3_conformal_algebra(
         )
     end
 
-    return (
+    if full_algebra_fit
+        # The scalar-only normalization belongs to the initializer, not the
+        # final jointly optimized amplitude. Report final scalar residuals.
+        fit = merge(fit, (scalar_commutator_residuals=[
+            row.kp_commutator_lhs-row.kp_commutator_target for row in primary_rows
+            if row.ell==0 && row.label in fit.fit_primary_labels],))
+    end
+    result = (
         fit=fit,
         primary_rows=primary_rows,
         channel_rows=channel_rows,
@@ -1922,12 +2016,21 @@ function analyze_so3_conformal_algebra(
         states=states,
         dimensions=Dict(key => hamiltonian.space.dim for (key, hamiltonian) in hamiltonians),
         heavy_space_mode=singlet_workspace.heavy_space_mode,
-        generator_candidate_names=GENERATOR_CANDIDATE_NAMES,
+        generator_candidate_names=candidates[:singlet].names,
     )
+    if full_algebra_fit
+        direct = score_so3_conformal_algebra(result;
+            labels=isnothing(training_labels) ? fit_primary_labels : training_labels,
+            term_weights=weights,worst_weight)
+        isapprox(direct.objective,fit.full_algebra_objective;atol=1e-7,rtol=1e-7) ||
+            error("compact and direct conformal objectives disagree")
+    end
+    return result
 end
 
 const CONFORMAL_OBJECTIVE_TERMS = (
     :primary_k, :dilatation, :mixed, :p_commutator, :k_commutator, :vacuum,
+    :shortening, :low_energy_leakage,
 )
 
 """Combine selected algebra closures into a Hamiltonian-search objective."""
@@ -1975,8 +2078,12 @@ function score_so3_conformal_algebra(
             mixed=mixed.fractional_residual,
             p_commutator=mixed.p_commutator_fraction,
             k_commutator=mixed.k_commutator_fraction,
+            shortening=primary.shortening_fraction,
+            low_energy_leakage=primary.p_low_energy_leakage_fraction,
         )
         for term in keys(values)
+            term == :primary_k && !primary.is_primary && continue
+            term == :shortening && !primary.is_conserved && continue
             value = Float64(getproperty(values, term))
             isfinite(value) && value >= 0 || error(
                 "non-finite conformal objective term $term for primary $label",
@@ -2206,6 +2313,9 @@ function score_cft_blocks(blocks; terms=CFT_SCORE_TERMS)
     )
 end
 
+include("SO3ConformalFit.jl")
+include("SO3ConformalTracking.jl")
+
 export SO3Model, SO3Workspace, SO3Hamiltonian,
        build_so3_model, build_workspace, build_hamiltonian,
        build_laughlin13_heavy_space, build_heavy_v1_operator,
@@ -2219,6 +2329,7 @@ export SO3Model, SO3Workspace, SO3Hamiltonian,
        analyze_so3_conformal_algebra,
        score_so3_conformal_algebra, CONFORMAL_OBJECTIVE_TERMS,
        GENERATOR_CANDIDATE_NAMES, DEFAULT_CONFORMAL_PRIMARY_SPECS,
+       DEFAULT_CONFORMAL_DESCENDANT_SPECS,
        score_cft_blocks, CFT_BLOCK_KEYS, CFT_SCORE_TERMS,
        CFT_STABLE_SIX_TERMS, CFT_AUDITED_SEVEN_TERMS, CFT_RELATION_SPECS
 

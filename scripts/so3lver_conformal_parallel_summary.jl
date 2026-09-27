@@ -3,11 +3,13 @@
 import Pkg
 
 const PROJECT_ROOT = normpath(joinpath(@__DIR__, ".."))
-Pkg.activate(PROJECT_ROOT; io=devnull)
+Base.active_project() == joinpath(PROJECT_ROOT,"Project.toml") ||
+    Pkg.activate(PROJECT_ROOT; io=devnull)
 
 using DataFrames
 using Dates
 using MottJainED
+using SHA
 using TOML
 
 function parse_options(args)
@@ -56,6 +58,9 @@ for worker in 1:worker_count
         "worker $worker did not produce best.toml: $best_path",
     )
     best = TOML.parsefile(best_path)
+    config_hash = open(io->bytes2hex(sha256(io)),config_path)
+    get(best,"config_source_sha256","")==config_hash ||
+        error("worker $worker configuration does not match the summary configuration")
     Int(get(best, "worker_index", 0)) == worker || error(
         "worker $worker output has the wrong worker_index",
     )
@@ -75,6 +80,7 @@ for worker in 1:worker_count
     push!(worker_results, Dict{String,Any}(
         "worker" => worker,
         "accepted" => Bool(best["accepted"]),
+        "inner_converged" => Bool(best["inner_converged"]),
         "objective" => objective,
         "values" => values,
         "holdout_mean" => Float64(best["holdout_mean"]),
@@ -88,13 +94,16 @@ for worker in 1:worker_count
         "config_source_sha256" => String(best["config_source_sha256"]),
         "so3lver_source_sha256" => String(best["so3lver_source_sha256"]),
         "driver_source_sha256" => String(best["driver_source_sha256"]),
+        "conformal_fit_source_sha256" => String(best["conformal_fit_source_sha256"]),
+        "conformal_tracking_source_sha256" => String(best["conformal_tracking_source_sha256"]),
         "fuzzified_version" => String(best["fuzzified_version"]),
     ))
 end
 
 for field in (
     "project_git_revision", "config_source_sha256", "so3lver_source_sha256",
-    "driver_source_sha256", "fuzzified_version",
+    "driver_source_sha256", "fuzzified_version", "conformal_fit_source_sha256",
+    "conformal_tracking_source_sha256",
 )
     values = unique(String(result[field]) for result in worker_results)
     length(values) == 1 || error(
@@ -119,6 +128,7 @@ for result in worker_results
     push!(rows, (
         worker=Int(result["worker"]),
         accepted=Bool(result["accepted"]),
+        inner_converged=Bool(result["inner_converged"]),
         agrees_with_best=agrees,
         objective=Float64(result["objective"]),
         delta_objective=delta_objective,
@@ -156,7 +166,7 @@ end
 
 all_workers_agree = all(row -> row.agrees_with_best, rows)
 all_workers_accepted = all(row -> row.accepted, rows)
-accepted = all_workers_agree && all_workers_accepted
+accepted = all_workers_agree && all_workers_accepted && all(row.inner_converged for row in rows)
 MottJainED.atomic_csv(
     joinpath(root, "parallel_convergence.csv"), DataFrame(rows),
 )

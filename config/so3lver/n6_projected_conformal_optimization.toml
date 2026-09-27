@@ -4,7 +4,7 @@ tol = 1.0e-8
 ncv = 18
 seed = 20260924
 heavy_space_mode = "laughlin13"
-output = "output/so3lver/conformal_optimization/n6_multistart_02_cg_corrected"
+output = "output/so3lver/conformal_optimization/n6_multistart_03_full_algebra"
 
 [base]
 Uf = 0.48
@@ -17,11 +17,14 @@ t = 0.5
 mu = 0.22881105175318384
 
 [algebra]
-# S/O/J determine the microscopic generator and the Hamiltonian objective.
-# T is never seen by either fit and is a strict spinning holdout.
+# S/O/J initialize the fit. The final generator and Hamiltonian both minimize
+# the same complete objective on S/O/J/dS/curlJ. T is a strict holdout.
 fit_primaries = ["S", "O", "J"]
-training_primaries = ["S", "O", "J"]
+training_primaries = ["S", "O", "J", "dS", "curlJ"]
 holdout_primaries = ["T"]
+generator_basis = "local_density"
+inner_iterations = 2000
+inner_starts = 2
 factor_lower = 0.005
 factor_upper = 0.250
 vacuum_weight = 1.0
@@ -41,6 +44,8 @@ mixed = 1.0
 p_commutator = 1.0
 k_commutator = 1.0
 vacuum = 1.0
+shortening = 1.0
+low_energy_leakage = 0.25
 
 [search]
 # muc is an ordinary optimization coordinate, not selected afterward by the
@@ -57,7 +62,10 @@ expansion_factor = 1.5
 boundary_fraction = 0.10
 minimum_start_distance = 0.30
 top_candidate_count = 30
-minimum_identity_overlap = 0.70
+minimum_step_overlap = 0.90
+tracking_maximum_step = 0.10
+tracking_maximum_depth = 10
+tracking_maximum_solves = 64
 penalty = 1000.0
 cold_recheck_tolerance = 1.0e-5
 # T never selects a point.  This is only a final anti-overfitting veto.

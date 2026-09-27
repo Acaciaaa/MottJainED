@@ -4,7 +4,7 @@ tol = 1.0e-9
 ncv = 12
 seed = 20260924
 heavy_space_mode = "laughlin13"
-output = "output/so3lver/conformal_optimization/n4_smoke_multistart_01"
+output = "output/so3lver/conformal_optimization/n4_smoke_full_algebra"
 
 [base]
 Uf = 0.48
@@ -18,8 +18,11 @@ mu = 0.22881105175318384
 
 [algebra]
 fit_primaries = ["S", "O", "J"]
-training_primaries = ["S", "O", "J"]
+training_primaries = ["S", "O", "J", "dS", "curlJ"]
 holdout_primaries = ["T"]
+generator_basis = "local_density"
+inner_iterations = 2000
+inner_starts = 2
 factor_lower = 0.005
 factor_upper = 0.250
 vacuum_weight = 1.0
@@ -39,6 +42,8 @@ mixed = 1.0
 p_commutator = 1.0
 k_commutator = 1.0
 vacuum = 1.0
+shortening = 1.0
+low_energy_leakage = 0.25
 
 [search]
 parameters = ["Uf", "Uf0", "Vf0", "mu"]
@@ -52,7 +57,10 @@ expansion_factor = 1.5
 boundary_fraction = 0.10
 minimum_start_distance = 0.20
 top_candidate_count = 10
-minimum_identity_overlap = 0.40
+minimum_step_overlap = 0.90
+tracking_maximum_step = 0.10
+tracking_maximum_depth = 10
+tracking_maximum_solves = 64
 penalty = 1000.0
 cold_recheck_tolerance = 1.0e-5
 holdout_maximum_anchor_ratio = 2.0

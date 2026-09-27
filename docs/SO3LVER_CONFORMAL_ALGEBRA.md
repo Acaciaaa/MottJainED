@@ -1,4 +1,149 @@
-# Projected conformal-algebra pilot
+# Projected conformal-algebra optimization
+
+## Current implementation: full-algebra fit (2026-09-27)
+
+The production profile now writes `n6_multistart_03_full_algebra`. It is not
+compatible with either previous search trace. The CG norm correction remains
+in place; the subsequent audit identified and corrected different problems:
+
+1. The eight old pair-projector vector operators do not span all local
+   Hamiltonian-density moments. Seven actual local-density moments have been
+   added, including the light-Laplacian/heavy contact and heavy density.
+2. The generalized eigenproblem fitted a proxy while the outer search scored
+   the full commutators. It is now only an initializer: coefficients, their
+   common amplitude, and the cylinder scale are jointly refined against
+   exactly the objective used by the Hamiltonian optimizer.
+3. Conserved-current shortening is tested through the `L -> L-1` component
+   of `P`: on `J` in training and on `T` in holdout. Generic primary algebra
+   alone does not require the protected dimensions of these currents.
+4. A global overlap cutoff against a remote anchor is replaced by adaptive
+   same-rank continuation. Smooth deformation is allowed; detected rank
+   crossings and ground-branch changes in computed sectors are rejected.
+   Global anchor overlap is retained only as a diagnostic.
+
+### Generator, representation, and projection
+
+The calculation continues to use only native `FuzzifiED.SO3lver` composite
+spaces and direct Jack/Laughlin-1/3 projection, not the old full-Fock solver.
+A single coefficient vector is shared by singlet and adjoint representations.
+The `local_density` basis retains the old eight candidates and appends
+`density_Uf, density_Vf, density_U0, density_V0, density_Uf0, density_Vf0,
+density_heavy`. These are actual rank-one moments of the local density and
+Laplacian products used in the scalar Hamiltonian, plus heavy density.
+Projection-induced redundancies are removed using coupling-independent
+full-block probes (15 candidates, numerical rank 10 in the N4 regression).
+This is not an exhaustive basis of every possible local improvement.
+
+The definitions remain `D=(H-E0)/factor`, `Lambda=P+K`,
+`P=(Lambda+[D,Lambda])/2`, `K=(Lambda-[D,Lambda])/2`, with physical reduced-norm
+weight `(2L'+1)/(2L+1)`. All intermediate states in two-operator products are
+in complete projected angular-momentum blocks, not a low-energy truncation.
+The exact full-energy definition can amplify UV transitions; sensitivity to
+that choice is still a separate scientific question, not resolved by this fix.
+
+### Identical inner and outer objectives
+
+The training sources are `S,O,J,dS,curlJ`. `dS` is singlet `L=1`, rank 1;
+`curlJ` is adjoint `L=1`, rank 2. These names are fixed-rank identification
+hypotheses, not a proof of their continuum identity. They test algebra closure,
+not `K|descendant>=0`. `T` is excluded from the initializer, full inner fit,
+and outer objective. Its state identity is monitored and its algebra is an
+independent final holdout veto.
+
+Each training primary contributes `K-primary`, dilation, mixed `[K,P]`,
+`[P,P]`, `[K,K]`, and low-energy leakage. Each descendant contributes these
+except `K-primary`; `J` adds shortening, and the vacuum contributes one
+constraint. The objective is the weighted mean of these 30 squared-norm
+ratios plus `worst_weight` times their largest value. Leakage has weight 0.25;
+the other terms have weight 1. There is no integer-gap or spectrum-score
+term. The outer coordinates remain `Uf,Uf0,Vf0,muc`, with `U0=9Uf`,
+`V0=Vf=0`, `t=0.5`.
+
+The full inner fit uses small Gram matrices precomputed from complete-block
+operator actions, then jointly varies direction, amplitude and scale with
+two deterministic local starts. At every Hamiltonian evaluation the compact
+objective is checked against independent direct operator application.
+This is a local nonlinear fit, not a guaranteed global coefficient minimum.
+Nonconverged fits are recorded and cannot receive final search acceptance.
+
+Same-rank continuation uses straight-line anchor-to-point paths, at least
+0.90 squared overlap per accepted step, and step sizes at most 0.10 of the
+hard-bound widths. Failed steps are bisected (depth 10, up to 64 extra spectra
+per point). Ground ordering is checked only in computed sectors. Crossings
+between sampled steps or in uncomputed sectors cannot be ruled out.
+
+### N6 preflight: one CPU, no parameter search
+
+```bash
+mkdir -p slurm-logs
+sbatch slurm/so3lver_n6_conformal_pilot.sbatch
+```
+
+This evaluates the anchor and the previous corrected-search winner, then
+cold-repeats the latter. It does not submit any follow-up job. Inspect
+`pilot.toml`, the evaluation trace (per-point time and inner convergence),
+and residual/coefficient tables before launching the full search.
+`pilot_passed` means numerical convergence and repeatability, not a good CFT
+or passing state identity at the old winner. Peak RSS is also recorded.
+Download both files from `output/so3lver/conformal_optimization/`:
+
+- `n6_full_algebra_pilot_job-JOBID.tar.gz`
+- `n6_full_algebra_pilot_job-JOBID.tar.gz.sha256`
+
+Archives are written even on ordinary pilot failure, so diagnostics survive.
+N6 runtime, convergence, and physical results remain unverified locally.
+
+### Full search: six independent one-CPU workers
+
+```bash
+sbatch slurm/so3lver_n6_conformal_optimize.sbatch
+```
+
+The job still runs six Julia processes simultaneously, with six deliberately
+separated starts and 24 total Latin-hypercube points per exploration round.
+If a prescribed start fails a gate, the worker first backs off along its own
+direction instead of silently duplicating an anchor start. Each worker has
+separate signed checkpoints. Neither Slurm file requests `--mem` or `--time`:
+CPU count determines memory on this cluster. Measure the expanded-basis cost
+with the pilot; do not assume the old implementation's roughly 2 GiB usage.
+No projected-spectrum jobs or their files are changed by either entry point.
+
+Final acceptance requires cold repeatability, valid identities and scale,
+inner-fit convergence, coordinate-neighbor checks, independent-start consensus,
+hard-bound clearance, and the `T` holdout veto. Legacy spectral scores are
+post-selection diagnostics only. `algebra_fit_loss` is retained as the legacy
+initializer diagnostic, not the objective being optimized; use
+`inner_objective_initial/final`, `inner_converged`, and `objective` instead.
+Best-point outputs now include actual generator coefficients and channel
+residuals. Source hashes cover the driver, operator module, full-fit module,
+tracking module, and configuration, and are captured at process startup.
+
+Download the full-search archive and checksum:
+`n6_multistart_03_full_algebra_job-JOBID.tar.gz` and `.tar.gz.sha256` from
+the same parent directory. Neither prior result directory is overwritten.
+
+### Local regression (N4 only)
+
+```bash
+OPENBLAS_NUM_THREADS=1 JULIA_NUM_THREADS=1 julia --project=. --threads=1 test/so3lver_runtests.jl
+OPENBLAS_NUM_THREADS=1 JULIA_NUM_THREADS=1 julia --project=. --threads=1 test/so3lver_conformal_fit_runtests.jl
+```
+
+Tests cover exact free-scalar algebra including spin, projected generator
+Hermiticity, the previously missing density moment, continuation versus rank
+crossings, holdout exclusion, and compact/direct objective agreement.
+Passing these and a small search test establishes implementation consistency,
+not that an interacting CFT or better N6 point has been found.
+
+---
+
+## Historical v1/v2 notes — not current optimizer defaults
+
+The remainder preserves earlier method descriptions and numerical results.
+In particular, references below to an eight-candidate fit, a three-source
+training set, or a global anchor-overlap gate describe old implementations.
+The two historical fixed-point diagnostic scripts still use their legacy
+profiles for reproducibility; use the N6 preflight above for the new method.
 
 > **September 2026 normalization correction.**  An independent operator audit
 > verified that the native SO(3)lver rank-one tensors, their Hermitian phases,

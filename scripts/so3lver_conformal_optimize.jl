@@ -3,7 +3,8 @@
 import Pkg
 
 const PROJECT_ROOT = normpath(joinpath(@__DIR__, ".."))
-Pkg.activate(PROJECT_ROOT; io=devnull)
+Base.active_project() == joinpath(PROJECT_ROOT,"Project.toml") ||
+    Pkg.activate(PROJECT_ROOT; io=devnull)
 
 using CSV
 using DataFrames
@@ -59,6 +60,10 @@ search_config = config["search"]
 
 nm = Int(run_config["nm"])
 allow_test_size = lowercase(get(options, "allow-test-size", "false")) == "true"
+pilot_only = lowercase(get(options, "pilot-only", "false")) == "true"
+pilot_point = haskey(options,"pilot-point") ?
+    parse.(Float64,split(options["pilot-point"],',')) : nothing
+!isnothing(pilot_point) && !pilot_only && error("pilot-point requires pilot-only=true")
 (nm == 6 || allow_test_size) || error(
     "production conformal optimization is restricted to N=6; " *
     "pass --allow-test-size=true only for a smoke test",
@@ -87,9 +92,14 @@ holdout_labels = Symbol.(algebra_config["holdout_primaries"])
 isempty(intersect(Set(training_labels), Set(holdout_labels))) || error(
     "training and holdout primary labels must be disjoint",
 )
-Set(fit_labels) == Set(training_labels) || error(
-    "generator fit primaries must equal the outer training primaries",
+issubset(Set(fit_labels), Set(training_labels)) || error(
+    "initializer primaries must belong to the full training set",
 )
+generator_basis = Symbol(algebra_config["generator_basis"])
+generator_basis == :local_density || error("production requires the complete local-density basis")
+descendant_specs = DEFAULT_CONFORMAL_DESCENDANT_SPECS
+inner_iterations = Int(algebra_config["inner_iterations"])
+inner_starts = Int(algebra_config["inner_starts"])
 factor_bounds = (
     Float64(algebra_config["factor_lower"]),
     Float64(algebra_config["factor_upper"]),
@@ -131,6 +141,11 @@ all((lower .<= center) .& (center .<= upper)) || error(
     "base point lies outside the search bounds",
 )
 all(half_widths .> 0) || error("initial half-widths must be positive")
+if !isnothing(pilot_point)
+    length(pilot_point)==4 || error("pilot-point must contain Uf,Uf0,Vf0,mu")
+    all((lower .<= pilot_point) .& (pilot_point .<= upper)) ||
+        error("pilot-point is outside the hard parameter bounds")
+end
 forced_start_values = if haskey(options, "forced-start")
     parsed_start = parse.(Float64, split(options["forced-start"], ','))
     length(parsed_start) == length(parameters) || error(
@@ -144,7 +159,10 @@ else
     nothing
 end
 
-minimum_identity_overlap = Float64(search_config["minimum_identity_overlap"])
+minimum_identity_overlap = Float64(search_config["minimum_step_overlap"])
+tracking_maximum_step = Float64(search_config["tracking_maximum_step"])
+tracking_maximum_depth = Int(search_config["tracking_maximum_depth"])
+tracking_maximum_solves = Int(search_config["tracking_maximum_solves"])
 0 <= minimum_identity_overlap <= 1 || error(
     "minimum_identity_overlap must lie in [0,1]",
 )
@@ -202,8 +220,18 @@ output = abspath(get(
 ))
 validate_only = lowercase(get(options, "validate-only", "false")) == "true"
 so3_path = joinpath(PROJECT_ROOT, "experimental", "SO3lverED.jl")
+fit_path = joinpath(PROJECT_ROOT,"experimental","SO3ConformalFit.jl")
+tracking_path = joinpath(PROJECT_ROOT,"experimental","SO3ConformalTracking.jl")
+source_hashes = (config=sha256_file(config_path),so3=sha256_file(so3_path),
+    driver=sha256_file(@__FILE__),fit=sha256_file(fit_path),tracking=sha256_file(tracking_path))
+source_revision = try
+    readchomp(`git -C $PROJECT_ROOT rev-parse HEAD`)
+catch
+    "unknown"
+end
 signature = MottJainED.stable_id(
-    "projected-conformal-hamiltonian-optimization-v4-cg-norm-parallel",
+    "projected-conformal-hamiltonian-optimization-v5-full-fit-continuation",
+    pilot_only, pilot_point,
     nm, tol, ncv, seed, worker_index, parallel_workers, forced_start_values,
     String(heavy_space_mode), parameters, center,
     lower, upper, half_widths, initial_samples, local_starts, local_iterations,
@@ -214,7 +242,7 @@ signature = MottJainED.stable_id(
     holdout_maximum_anchor_ratio, consensus_parameter_tolerances,
     consensus_objective_tolerance, robustness_steps,
     robustness_objective_tolerance, hard_boundary_fraction,
-    sha256_file(config_path), sha256_file(so3_path), sha256_file(@__FILE__),
+    source_hashes,
 )
 
 trace_path = joinpath(output, "algebra_optimization_evaluations.csv")
@@ -271,7 +299,8 @@ adjoint_workspace = build_workspace(
     disp_std=true,
 )
 problem = build_so3_conformal_problem(
-    singlet_workspace, adjoint_workspace, base; disp_std=true,
+    singlet_workspace, adjoint_workspace, base;
+    generator_basis, descendant_specs, disp_std=true,
 )
 println("problem_build_seconds=$(time() - started)")
 flush(stdout)
@@ -293,25 +322,51 @@ point_key(values) = MottJainED.stable_id(
     signature, round.(Float64.(values); digits=11),
 )
 
-reference_states = Dict{Tuple{Symbol,Int,Int},Vector{Float64}}()
+anchor_snapshot = Ref{Any}(nothing)
+tracking_specs = (
+    (label=:G,representation=:singlet,ell=0,rank=1),
+    DEFAULT_CONFORMAL_PRIMARY_SPECS..., descendant_specs...,
+)
+tracking_cache = Dict{String,Any}()
 cache = Dict{String,NamedTuple}()
 
-function identity_assessment(result)
-    rows = NamedTuple[]
-    for spec in DEFAULT_CONFORMAL_PRIMARY_SPECS
-        key = (spec.representation, spec.ell, spec.rank)
-        source = view(result.states[(spec.representation, spec.ell)], :, spec.rank)
-        overlap = isempty(reference_states) ? 1.0 :
-            abs2(dot(reference_states[key], source))
-        push!(rows, (
-            label=spec.label,
-            representation=spec.representation,
-            ell=spec.ell,
-            rank=spec.rank,
-            overlap=overlap,
-        ))
+function tracking_snapshot(values)
+    id = point_key(values)
+    haskey(tracking_cache,id) && return tracking_cache[id]
+    couplings = physical_couplings(values)
+    energies = Dict{Tuple{Symbol,Int},Vector{Float64}}()
+    states = Dict{Tuple{Symbol,Int},Matrix{Float64}}()
+    for key in sort!(collect(problem.spectral_blocks))
+        h = problem.hamiltonians[key]
+        retune!(h,couplings)
+        count = max(2,maximum((spec.rank+1 for spec in tracking_specs
+            if (spec.representation,spec.ell)==key);init=0))
+        seed = [sin(j*sqrt(2.0))+cos(j*sqrt(3.0)) for j in 1:h.space.dim]
+        energies[key],states[key] = solve(h;k=count,tol,ncv,vectors=true,
+            initvec=seed/norm(seed),disp_std=false)
     end
-    return (minimum=minimum(getproperty.(rows, :overlap)), rows=rows)
+    snapshot = (energies=energies,states=states)
+    # This cache changes cost only; paths and initial vectors are deterministic.
+    length(tracking_cache)>=128 && empty!(tracking_cache)
+    tracking_cache[id] = snapshot
+    return snapshot
+end
+
+function identity_assessment(result, values)
+    target = (energies=result.energies,states=result.states)
+    anchor = isnothing(anchor_snapshot[]) ? target : anchor_snapshot[]
+    try
+        return SO3lverED._continue_conformal_identity(
+            center, values, anchor, target, tracking_snapshot, tracking_specs;
+            scales=upper-lower, minimum_overlap=minimum_identity_overlap,
+            maximum_step=tracking_maximum_step, maximum_depth=tracking_maximum_depth,
+            maximum_solves=tracking_maximum_solves,
+        )
+    finally
+        for h in Base.values(problem.hamiltonians)
+            retune!(h,physical_couplings(values))
+        end
+    end
 end
 
 function record_constraints!(id, source, score, family)
@@ -343,6 +398,9 @@ function evaluate_point(values; source="search", force=false, record=true)
             singlet_workspace, adjoint_workspace, couplings;
             block_counts,
             fit_primary_labels=fit_labels,
+            generator_basis, descendant_specs, full_algebra_fit=true,
+            training_labels, term_weights, worst_weight,
+            inner_iterations, inner_starts,
             factor_bounds,
             vacuum_weight=Float64(algebra_config["vacuum_weight"]),
             dilatation_weight=Float64(algebra_config["dilatation_weight"]),
@@ -360,15 +418,15 @@ function evaluate_point(values; source="search", force=false, record=true)
             result; labels=holdout_labels, term_weights=holdout_weights,
             worst_weight=0.0,
         )
-        identity = identity_assessment(result)
+        identity = identity_assessment(result, physical)
         overlap = identity.minimum
         valid = result.fit.commutator_normalization_valid &&
                 !result.fit.factor_at_boundary &&
-                overlap >= minimum_identity_overlap
+                identity.passed
         reason = !result.fit.commutator_normalization_valid ?
             "commutator_normalization" :
             result.fit.factor_at_boundary ? "factor_boundary" :
-            overlap < minimum_identity_overlap ? "state_identity" : "ok"
+            !identity.passed ? identity.reason : "ok"
         objective = valid ? training.objective : penalty + training.objective
         summary = (
             id=id, source=String(source), values=physical, couplings=couplings,
@@ -391,7 +449,8 @@ function evaluate_point(values; source="search", force=false, record=true)
                     ell=row.ell,
                     rank=row.rank,
                     overlap=row.overlap,
-                    passed=row.overlap >= minimum_identity_overlap,
+                    minimum_step_overlap=row.minimum_step_overlap,
+                    passed=row.passed,
                 ))
             end
             MottJainED.append_csv(trace_path, (
@@ -411,6 +470,11 @@ function evaluate_point(values; source="search", force=false, record=true)
                 factor_at_boundary=result.fit.factor_at_boundary,
                 algebra_fit_loss=result.fit.value,
                 minimum_identity_overlap=overlap,
+                minimum_anchor_overlap=identity.minimum_anchor,
+                tracking_solves=identity.solves,
+                inner_converged=result.fit.full_algebra_converged,
+                inner_objective_initial=result.fit.full_algebra_initial_objective,
+                inner_objective_final=result.fit.full_algebra_objective,
                 seconds=time() - point_started,
                 Uf=couplings.Uf,
                 U0=couplings.U0,
@@ -459,6 +523,11 @@ function evaluate_point(values; source="search", force=false, record=true)
                 factor_at_boundary=true,
                 algebra_fit_loss=Inf,
                 minimum_identity_overlap=0.0,
+                minimum_anchor_overlap=0.0,
+                tracking_solves=0,
+                inner_converged=false,
+                inner_objective_initial=Inf,
+                inner_objective_final=Inf,
                 seconds=time() - point_started,
                 Uf=couplings.Uf,
                 U0=couplings.U0,
@@ -480,14 +549,48 @@ end
 # eigenvectors.  A resumed job does not append that administrative solve.
 anchor_full = evaluate_point(center; source="anchor", force=true, record=!resuming)
 anchor_full.valid || error("the conformal optimization anchor is invalid: $(anchor_full.reason)")
-for spec in DEFAULT_CONFORMAL_PRIMARY_SPECS
-    key = (spec.representation, spec.ell, spec.rank)
-    reference_states[key] = copy(view(
-        anchor_full.result.states[(spec.representation, spec.ell)], :, spec.rank,
-    ))
-end
+anchor_snapshot[] = (energies=anchor_full.result.energies,states=anchor_full.result.states)
 anchor = merge(anchor_full, (result=nothing,))
 cache[anchor.id] = anchor
+
+if pilot_only
+    # Fixed Hamiltonians only: no outer search, acceptance claim, or change to
+    # production checkpoints. Use the exact production coefficient fit.
+    target = isnothing(pilot_point) ? anchor_full :
+        evaluate_point(pilot_point;source="pilot_point",force=true)
+    isnothing(target.result) && error("pilot point failed: $(target.reason)")
+    empty!(problem.warm_vectors)
+    repeated = evaluate_point(target.values;source="pilot_cold_recheck",force=true)
+    isnothing(repeated.result) && error("pilot cold recheck failed: $(repeated.reason)")
+    delta = abs(target.training.objective-repeated.training.objective)
+    fits_converged = anchor_full.result.fit.full_algebra_converged &&
+        target.result.fit.full_algebra_converged && repeated.result.fit.full_algebra_converged
+    pilot_passed = fits_converged && delta<=cold_recheck_tolerance
+    for (name,item) in (("anchor",anchor_full),("point",repeated))
+        MottJainED.atomic_csv(joinpath(output,"$(name)_primary_residuals.csv"),
+            DataFrame(item.result.primary_rows))
+        MottJainED.atomic_csv(joinpath(output,"$(name)_commutator_residuals.csv"),
+            DataFrame(item.result.mixed_commutator_rows))
+        MottJainED.atomic_csv(joinpath(output,"$(name)_generator_coefficients.csv"),
+            DataFrame(name=String.(collect(item.result.generator_candidate_names)),
+                coefficient=item.result.fit.coefficients))
+    end
+    MottJainED.atomic_toml(joinpath(output,"pilot.toml"),Dict{String,Any}(
+        "pilot_passed"=>pilot_passed,"not_a_search_result"=>true,
+        "inner_fits_converged"=>fits_converged,"cold_recheck_delta"=>delta,
+        "cold_recheck_tolerance"=>cold_recheck_tolerance,
+        "anchor_objective"=>anchor.training.objective,"anchor_holdout"=>anchor.holdout.mean,
+        "point_objective"=>repeated.training.objective,"point_holdout"=>repeated.holdout.mean,
+        "point_identity_valid"=>repeated.valid,"point_reason"=>repeated.reason,
+        "point_parameters"=>repeated.values,"signature"=>signature,
+        "project_git_revision"=>source_revision,
+        "source_hashes"=>Dict(String(k)=>v for (k,v) in pairs(source_hashes)),
+        "coordinate_rank"=>repeated.result.fit.full_algebra_coordinate_rank,
+        "maximum_rss_bytes"=>Sys.maxrss(),
+    ))
+    println("PILOT_COMPLETE passed=$pilot_passed cold_delta=$delta output=$output")
+    exit(pilot_passed ? 0 : 2)
+end
 
 # Final audits are excluded from the resume cache so they cannot silently alter
 # the deterministic search trajectory.
@@ -580,6 +683,17 @@ function run_search()
                 source="round_$(round_index)_forced_start",
             )
             push!(candidates, forced_record)
+            if !forced_record.valid
+                # Preserve this worker's direction instead of silently giving
+                # multiple workers the same anchor start after a failed gate.
+                for backoff in 1:4
+                    trial = center + (forced_start_values-center)/2.0^backoff
+                    forced_record = evaluate_point(trial;
+                        source="round_$(round_index)_forced_backoff_$(backoff)")
+                    push!(candidates,forced_record)
+                    forced_record.valid && break
+                end
+            end
         end
         samples = latin_hypercube_points(
             initial_samples, region_lower, region_upper, rng,
@@ -604,6 +718,11 @@ function run_search()
         starts = if !isnothing(forced_record) && forced_record.valid &&
                     isfinite(forced_record.objective)
             Any[forced_record]
+        elseif !isnothing(forced_record) && parallel_workers>1
+            # If continuation failed even after backoff, retain independently
+            # sampled alternatives; do not count a duplicated anchor as a start.
+            independent = filter(c->norm((c.values-center)./(upper-lower))>1e-8,candidates)
+            diverse_starts(independent,local_starts,region_lower,region_upper)
         else
             diverse_starts(candidates, local_starts, region_lower, region_upper)
         end
@@ -807,6 +926,11 @@ function run_search()
         ))
     end
     MottJainED.atomic_csv(joinpath(output, "top_candidates.csv"), DataFrame(top_rows))
+    MottJainED.atomic_csv(joinpath(output,"best_generator_coefficients.csv"),
+        DataFrame(name=String.(collect(best.result.generator_candidate_names)),
+                  coefficient=best.result.fit.coefficients))
+    MottJainED.atomic_csv(joinpath(output,"best_channel_residuals.csv"),
+        DataFrame(best.result.channel_rows))
 
     MottJainED.atomic_csv(
         joinpath(output, "best_primary_residuals.csv"),
@@ -863,7 +987,8 @@ function run_search()
         holdout_maximum_anchor_ratio * anchor.holdout.mean
     accepted = best.valid && objective_improved && cold_recheck_passed &&
         holdout_guard_passed && hard_boundary_passed &&
-        local_minimum_confirmed && multistart_complete && multistart_all_agree
+        local_minimum_confirmed && multistart_complete && multistart_all_agree &&
+        best.result.fit.full_algebra_converged
 
     best_dict = Dict{String,Any}(
         "completed_at" => string(now()),
@@ -888,6 +1013,11 @@ function run_search()
         "factor" => best.factor,
         "algebra_fit_loss" => best.algebra_fit_loss,
         "minimum_identity_overlap" => best.minimum_identity_overlap,
+        "minimum_anchor_overlap" => best.identity.minimum_anchor,
+        "inner_converged" => best.result.fit.full_algebra_converged,
+        "inner_objective_initial" => best.result.fit.full_algebra_initial_objective,
+        "inner_objective_final" => best.result.fit.full_algebra_objective,
+        "inner_coordinate_rank" => best.result.fit.full_algebra_coordinate_rank,
         "anchor_objective" => anchor.objective,
         "anchor_training_mean" => anchor.training.mean,
         "anchor_holdout_mean" => anchor.holdout.mean,
@@ -921,10 +1051,12 @@ function run_search()
             for name in fieldnames(Couplings)
         ),
         "term_weights" => Dict(String(key) => value for (key, value) in term_weights),
-        "config_source_sha256" => sha256_file(config_path),
-        "so3lver_source_sha256" => sha256_file(so3_path),
-        "driver_source_sha256" => sha256_file(@__FILE__),
-        "project_git_revision" => MottJainED.git_revision(PROJECT_ROOT),
+        "config_source_sha256" => source_hashes.config,
+        "so3lver_source_sha256" => source_hashes.so3,
+        "driver_source_sha256" => source_hashes.driver,
+        "conformal_fit_source_sha256" => source_hashes.fit,
+        "conformal_tracking_source_sha256" => source_hashes.tracking,
+        "project_git_revision" => source_revision,
         "fuzzified_version" => string(Base.pkgversion(FuzzifiED)),
     )
     MottJainED.atomic_toml(joinpath(output, "best.toml"), best_dict)
